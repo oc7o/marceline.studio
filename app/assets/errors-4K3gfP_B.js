@@ -1,0 +1,1 @@
+import{n as e}from"./rolldown-runtime-4tVxZq34.js";var t=e({ApiError:()=>n}),n=class extends Error{status;body;retryAfterSeconds;constructor(e,t,n,r=null){super(t),this.name=`ApiError`,this.status=e,this.body=n,this.retryAfterSeconds=r}};export{t as n,n as t};
