@@ -1,0 +1,352 @@
+# Production customer cache (ADR 0028, docs/runbooks/production.md): Caddy + gunicorn + Postgres.
+#
+# A separate compose project (`marceline-prod`) with its own volumes and networks, so it can run
+# beside the development stack on the same machine for a rehearsal and later move to its own VPS
+# unchanged. Nothing here crawls, fetches media, matches or schedules: there is no worker service,
+# the web image has no ffmpeg, and the customer surface answers only /api/v1/app/* (and health).
+#
+# Configuration comes from infra/prod/.env on the host (template: infra/prod/prod.env.example).
+# Required values have no defaults — compose refuses to start without them.
+#
+# Data: this database holds customer accounts (pulled from development by `pull_accounts`),
+# sessions and a read-through cache of signed customer API bundles fetched from the development
+# VPS's export listener over Tailscale (ADR 0028). Two Django processes share the image:
+# `web` (the public customer surface, behind Caddy's public site) and `internal` (the purge
+# endpoint and the customer write outbox's pull/acknowledgement only, behind Caddy's second site,
+# which is published on the Tailscale address only). With OUTBOX_ENABLED the database also holds
+# customer writes until development has pulled and settled them (ADR 0028 write-path amendment).
+
+name: marceline-prod
+
+x-django-env: &django-env
+  DJANGO_ENV: prod
+  MARCELINE_ROLE: prod
+  DJANGO_PUBLIC_SURFACE: customer
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?set DJANGO_SECRET_KEY in infra/prod/.env}
+  # The public name, plus `web` — the name the customer app calls this service by on the private
+  # network (ADR 0036). `Host` cannot be forwarded: it is a forbidden header for `fetch`, so the
+  # internal name is what arrives. Nothing outside the edge network can send either, because Caddy
+  # answers only for APP_DOMAIN.
+  DJANGO_ALLOWED_HOSTS: ${APP_DOMAIN:?set APP_DOMAIN in infra/prod/.env},web
+  DJANGO_CSRF_TRUSTED_ORIGINS: ${APP_ORIGIN:?set APP_ORIGIN in infra/prod/.env}
+  # Exactly one proxy (Caddy) sits in front of gunicorn; see LOGIN_TRUSTED_PROXIES in .env.example.
+  LOGIN_TRUSTED_PROXIES: "1"
+  POSTGRES_HOST: db
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: marceline
+  POSTGRES_USER: marceline
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/prod/.env}
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-prod}
+  MARCELINE_RELEASE: ${MARCELINE_RELEASE:-}
+  # The cache (ADR 0028): development's export listener over Tailscale (use its 100.x address; the
+  # container does not resolve MagicDNS names), the scoped token, and development's public key.
+  CACHE_EXPORT_BASE_URL: ${CACHE_EXPORT_BASE_URL:?set CACHE_EXPORT_BASE_URL in infra/prod/.env}
+  CACHE_EXPORT_TOKEN: ${CACHE_EXPORT_TOKEN:?set CACHE_EXPORT_TOKEN in infra/prod/.env}
+  CACHE_VERIFY_KEY_PATH: /run/marceline/dev-signing.pub
+  # Customer writes (ADR 0028 amendment "The production write path"): accepted into the outbox,
+  # pulled by development. `false` keeps production read-only (writes answer 503).
+  OUTBOX_ENABLED: ${OUTBOX_ENABLED:-false}
+  OUTBOX_STALE_ALERT_HOURS: ${OUTBOX_STALE_ALERT_HOURS:-0.5}
+  OUTBOX_PAUSE_AFTER_HOURS: ${OUTBOX_PAUSE_AFTER_HOURS:-6}
+  # ADR 0055: proof of control of the creator's platform account. Unlike cloud fingerprinting this
+  # one *may* run here — the status read travels in the signed bundle and the two writes go into the
+  # outbox, like rights and notices — so it is passed through rather than pinned off. Off by
+  # default; it has to be on on **both** machines, or the public host answers 404 for a step
+  # development is expecting the creator to take.
+  ACCOUNT_CONTROL_VERIFICATION_ENABLED: ${ACCOUNT_CONTROL_VERIFICATION_ENABLED:-false}
+  # ADR 0056 (issue #133): the creator's own export and deletion requests. This host is the *reason*
+  # the feature exists — an invited creator who only ever sees the public app could ask for neither
+  # — so it is passed through rather than pinned off: the status read comes out of the signed bundle
+  # and both writes go into the outbox. Off by default, and it has to be on on both machines, or the
+  # screen is a 404 here while development is waiting for requests.
+  CUSTOMER_DATA_REQUESTS_ENABLED: ${CUSTOMER_DATA_REQUESTS_ENABLED:-false}
+  # Cloud fingerprinting (issue #59, ADR 0044) is off here, and stated rather than left out so the
+  # refusal is visible and checked (`make prod-config`). Customer media is never **stored** on the
+  # public host: there is no ffmpeg in this image, no spool volume, and nothing writes a chunk.
+  # Since the amendment of 2026-09-19 `web` may **relay** an upload to development as it reads it
+  # (§9); the relay's own settings are on that service, and this default keeps the whole feature 404
+  # here until the operator sets both.
+  CLOUD_FINGERPRINTING_ENABLED: "false"
+  # Onboarding by invite (issue #115, ADR 0052 §9 / amendment 2026-09-19). The redemption runs on
+  # this host — a creator who is invited into the private beta is not on the tailnet — and creates
+  # nothing here: the finished redemption goes into the outbox and development applies it, so
+  # OUTBOX_ENABLED must be on for the last step to be accepted. Off by default, like every flag.
+  #
+  # ONBOARDING_DOCUMENTS must name the **same** published versions and digests as development, or
+  # the accept step refuses here (empty) or development refuses the redemption when it applies it
+  # (`documents_outdated`). The expiry and the link's base URL are development's business: only it
+  # issues invites.
+  ONBOARDING_INVITES_ENABLED: ${ONBOARDING_INVITES_ENABLED:-false}
+  ONBOARDING_DOCUMENTS: ${ONBOARDING_DOCUMENTS:-}
+  # Address verification and password reset (ADR 0054, issue #149). The **routes** run here — a
+  # creator who forgot their password is on the public host, not on the tailnet — and nothing else
+  # does: no token is issued here, no mail is sent here, and **no mail transport is configured here
+  # or ever will be** (`make prod-config` refuses one). A request and a redemption both go into the
+  # outbox; development issues, sends and applies. It therefore needs OUTBOX_ENABLED like the invite
+  # redemption does. Off by default, like every flag.
+  ACCOUNT_EMAIL_FLOWS_ENABLED: ${ACCOUNT_EMAIL_FLOWS_ENABLED:-false}
+  # The lifetimes, so the screens here can say the same numbers development's mails do.
+  ACCOUNT_PASSWORD_RESET_TTL_MINUTES: ${ACCOUNT_PASSWORD_RESET_TTL_MINUTES:-60}
+  ACCOUNT_VERIFICATION_TTL_HOURS: ${ACCOUNT_VERIFICATION_TTL_HOURS:-48}
+
+x-verify-key: &verify-key
+  # Development's *public* key only. The private key never leaves development.
+  - ${CACHE_VERIFY_KEY_FILE:?set CACHE_VERIFY_KEY_FILE in infra/prod/.env}:/run/marceline/dev-signing.pub:ro
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: marceline
+      POSTGRES_USER: marceline
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/prod/.env}
+    # Sized for a 2 vCPU / 2-4 GB VPS holding a small cache. No published port: only `web` reaches
+    # it, over the internal `data` network.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - max_connections=30
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [data]
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: ../../backend
+      dockerfile: ../infra/prod/web.Dockerfile
+    image: marceline-prod-web:${MARCELINE_RELEASE:-latest}
+    restart: unless-stopped
+    environment:
+      <<: *django-env
+      # Cloud fingerprinting as a **streaming relay** (ADR 0044 §9, amendment 2026-09-19), and only
+      # here: `internal` keeps the "false" of the anchor above, because a customer's chunk arrives
+      # on the customer surface and nowhere else. With relay mode this process forwards each read of
+      # a chunk to development's Tailscale-only listener and writes nothing — no spool (the settings
+      # refuse one in relay mode), no row, no outbox item, no temporary file. The credential is a
+      # `upload_relay`-scoped service token, never the read-only export token.
+      CLOUD_FINGERPRINTING_ENABLED: ${CLOUD_FINGERPRINTING_ENABLED:-false}
+      CLOUD_UPLOAD_RELAY_MODE: ${CLOUD_UPLOAD_RELAY_MODE:-false}
+      CLOUD_RELAY_BASE_URL: ${CLOUD_RELAY_BASE_URL:-}
+      CLOUD_RELAY_TOKEN: ${CLOUD_RELAY_TOKEN:-}
+    volumes: *verify-key
+    # No published port: Caddy is the only way in. Migrations are a deploy step, never on start.
+    networks: [edge, data]
+    mem_limit: 768m
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # Plain HTTP straight to gunicorn (the health route is exempt from the HTTPS redirect), with
+      # the **first** entry of ALLOWED_HOSTS as the Host header — the public name — so the check
+      # exercises the same value a real customer request carries.
+      #
+      # It must be the first entry, not the whole variable. Since ADR 0036 DJANGO_ALLOWED_HOSTS is
+      # "${APP_DOMAIN},web", and a Host header containing a comma fails Django's host_validation_re:
+      # split_domain_port() returns ('', ''), validate_host() is False, CommonMiddleware raises
+      # DisallowedHost and the health route answers 400 before it is ever reached. The container
+      # would then never become healthy, and `customer` and `caddy` both wait on it — so the whole
+      # production stack would come up with no edge and no app.
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, urllib.request;
+          urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/api/v1/health',
+          headers={'Host': os.environ['DJANGO_ALLOWED_HOSTS'].split(',')[0]}), timeout=5)
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # The purge listener (ADR 0028): the same image, answering POST /internal/v1/cache/purge and
+  # nothing else (DJANGO_PUBLIC_SURFACE=internal). Reached only through Caddy's second site, which
+  # compose publishes on the Tailscale address (TAILSCALE_BIND) — never on the public interface.
+  internal:
+    image: marceline-prod-web:${MARCELINE_RELEASE:-latest}
+    restart: unless-stopped
+    command:
+      - gunicorn
+      - marceline.wsgi:application
+      - --bind
+      - 0.0.0.0:8000
+      - --workers
+      - "1"
+      - --threads
+      - "2"
+      - --timeout
+      - "15"
+      - --worker-tmp-dir
+      - /dev/shm
+      - --no-control-socket
+      - --error-logfile
+      - "-"
+    environment:
+      <<: *django-env
+      DJANGO_PUBLIC_SURFACE: internal
+      # The name development calls it by (CACHE_PURGE_BASE_URL on development), e.g. the 100.x
+      # address. No browser ever reaches this listener, so no CSRF origin and no export token.
+      DJANGO_ALLOWED_HOSTS: ${PURGE_HOST:?set PURGE_HOST in infra/prod/.env}
+      DJANGO_CSRF_TRUSTED_ORIGINS: ""
+      CACHE_EXPORT_TOKEN: ""
+      # Production's own outbox key: signs the batches of customer writes development pulls. Only
+      # this Tailscale-only process holds it — never `web`, which faces the internet.
+      OUTBOX_SIGNING_KEY_PATH: /run/marceline/prod-outbox.key
+    volumes:
+      - ${CACHE_VERIFY_KEY_FILE:?set CACHE_VERIFY_KEY_FILE in infra/prod/.env}:/run/marceline/dev-signing.pub:ro
+      - ${OUTBOX_SIGNING_KEY_FILE:?set OUTBOX_SIGNING_KEY_FILE in infra/prod/.env}:/run/marceline/prod-outbox.key:ro
+    networks: [edge, data]
+    # A pull answers up to about 22 MB of signed customer writes, built in memory.
+    mem_limit: 384m
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # The customer app's Next.js server (ADR 0036): it renders /app and relays the browser's writes
+  # to `web` over the edge network. No published port — Caddy is the only way in, and only while
+  # CUSTOMER_APP=next selects it (CUSTOMER_APP=spa serves the Vite build from the Caddy image
+  # instead, which is the rollback).
+  customer:
+    build:
+      context: ../../frontend
+      dockerfile: ../infra/prod/customer.Dockerfile
+    image: marceline-prod-customer:${MARCELINE_RELEASE:-latest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      # Django on the private side of the same machine.
+      CUSTOMER_DJANGO_BASE_URL: http://web:8000
+      # The public origin, which Django compares with CSRF_TRUSTED_ORIGINS on every write. Without
+      # it the server refuses the request rather than guessing an origin a CSRF check would then
+      # pass for the wrong reason.
+      CUSTOMER_PUBLIC_ORIGIN: ${APP_ORIGIN:?set APP_ORIGIN in infra/prod/.env}
+    networks: [edge]
+    # A Next standalone server is 120-250 MB resident at our traffic (ADR 0028 f).
+    mem_limit: 384m
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          require('http').get({host:'127.0.0.1',port:3000,path:'/app/sign-in'},
+          r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    build:
+      context: ../../frontend
+      dockerfile: ../infra/prod/spa.Dockerfile
+    image: marceline-prod-caddy:${MARCELINE_RELEASE:-latest}
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN in infra/prod/.env}
+      CADDY_HSTS: ${CADDY_HSTS:-max-age=31536000; includeSubDomains}
+      # `internal` while dash.marceline.studio points at the Tailscale address; `acme` at launch.
+      # One variable for every site block in the file, so PUBLIC_SITE=on requires `acme` — a live
+      # public name with Caddy's own CA is a browser warning. `make prod-config` refuses it.
+      CADDY_TLS: ${CADDY_TLS:-acme}
+      # The ACME account's contact address: the project mailbox, never a personal address. Required
+      # with no default, because an empty value does not adapt ("wrong argument count ... after
+      # 'email'") — compose refusing to start is the loud failure; a Caddy that exits is the quiet
+      # one. It is the account for both names once PUBLIC_SITE=on.
+      CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL:?set CADDY_ACME_EMAIL in infra/prod/.env}
+      # Which app answers /app (ADR 0036): `next` = the customer container, `spa` = the Vite build
+      # baked into this image. The cut-over and the rollback are this one value plus a restart.
+      CUSTOMER_APP: ${CUSTOMER_APP:-spa}
+      # The public marketing site (website/), served by this same Caddy from /srv/site as static
+      # files (operator, 2026-09-18). `off` adds no site block, so Caddy asks for no certificate
+      # for a name that may not point here yet; `on` publishes it at SITE_DOMAIN and redirects
+      # www. Nothing about the customer edge changes either way — it is a separate site block with
+      # no upstream. One Caddy serves both names from the cut-over on (operator, 2026-09-19); until
+      # docs/runbooks/production.md section 14 has run, marceline.studio is served by the
+      # standalone `marceline-site` project and this stays `off`.
+      PUBLIC_SITE: ${PUBLIC_SITE:-off}
+      SITE_DOMAIN: ${SITE_DOMAIN:-marceline.studio}
+      SITE_WWW_DOMAIN: ${SITE_WWW_DOMAIN:-www.marceline.studio}
+      SITE_CANONICAL_ORIGIN: ${SITE_CANONICAL_ORIGIN:-https://marceline.studio}
+    ports:
+      # CADDY_BIND has no default on purpose: the host's **public** IPv4 on the production VPS,
+      # 127.0.0.1 for a rehearsal on the development VPS (ADR 0028). Never 0.0.0.0 and never the
+      # Tailscale address once PUBLIC_SITE=on — docker-published ports bypass the host firewall, so
+      # a wildcard publishes on the tailnet as well, and a public name bound to the tailnet is
+      # reachable by nobody. `make prod-config` refuses both, and with PUBLIC_SITE=on it also
+      # refuses a published port other than 80/443: Let's Encrypt validates on those two only.
+      - "${CADDY_BIND:?set CADDY_BIND in infra/prod/.env}:${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_BIND}:${CADDY_HTTPS_PORT:-443}:443"
+      - "${CADDY_BIND}:${CADDY_HTTPS_PORT:-443}:443/udp"
+      # The purge site: production's Tailscale address ONLY (`tailscale ip -4`), never 0.0.0.0 and
+      # never the public address — `make prod-config` refuses a wildcard here and accepts only a
+      # tailnet address (100.64.0.0/10, fd7a:115c:a1e0::/48) or loopback for a rehearsal. The
+      # tailnet ACL admits the development node.
+      - "${TAILSCALE_BIND:?set TAILSCALE_BIND in infra/prod/.env}:${PURGE_PORT:-8081}:8081"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The public marketing site, read-only: a directory of static files, mounted rather than
+      # baked in, so publishing a corrected Impressum is an rsync and a reload and not an image
+      # build on a 2 vCPU box. Read-only because nothing in this container may ever write to it.
+      # The default is the checkout's own website/public, which is what a rehearsal serves; on
+      # production SITE_ROOT points at the copy rsync put there (docs/runbooks/production.md).
+      - ${SITE_ROOT:-../../website/public}:/srv/site:ro
+      # Certificates and ACME account: losing them on every restart runs into Let's Encrypt limits.
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+    # The same hardening the standalone site edge has run with since 2026-09-18 (infra/prod/site/
+    # compose.yaml), moved here because this process serves the public brochure after the cut-over
+    # (docs/runbooks/production.md section 14) and must not be the weaker of the two. Nothing but
+    # /data, /config and /tmp is writable; an edge that serves files and proxies requests has no
+    # reason to change its own filesystem.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      # Ports 80 and 443 inside the container, and nothing else. Caddy runs as root in the upstream
+      # image; with every other capability dropped that buys an attacker nothing.
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    depends_on:
+      web:
+        condition: service_healthy
+      internal:
+        condition: service_started
+      customer:
+        condition: service_started
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+
+networks:
+  # Caddy and gunicorn. Not internal: Caddy needs the internet for ACME, web for optional Sentry
+  # and for fetching bundles from development over the host's Tailscale interface.
+  edge: {}
+  # gunicorn and Postgres only; no route out of it.
+  data:
+    internal: true

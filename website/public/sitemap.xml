@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Hand-maintained, because there is no build step to generate it and twelve URLs do not need one.
+  `make website-check` fails if this file and the files on disk disagree, so it cannot drift: every
+  page without `<meta name="robots" content="noindex">` has to be listed, and no page with one may
+  be. There is no noindex page left, so this file lists all twelve.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>https://marceline.studio/</loc>
+    <xhtml:link rel="alternate" hreflang="de" href="https://marceline.studio/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://marceline.studio/en/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://marceline.studio/"/>
+  </url>
+  <url>
+    <loc>https://marceline.studio/so-funktioniert-es</loc>
+    <xhtml:link rel="alternate" hreflang="de" href="https://marceline.studio/so-funktioniert-es"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://marceline.studio/en/how-it-works"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://marceline.studio/so-funktioniert-es"/>
+  </url>
+  <url>
+    <loc>https://marceline.studio/fuer-studios-und-agenturen</loc>
+    <xhtml:link rel="alternate" hreflang="de" href="https://marceline.studio/fuer-studios-und-agenturen"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://marceline.studio/en/for-studios-and-agencies"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://marceline.studio/fuer-studios-und-agenturen"/>
+  </url>
+  <url>
+    <loc>https://marceline.studio/kontakt</loc>
+    <xhtml:link rel="alternate" hreflang="de" href="https://marceline.studio/kontakt"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://marceline.studio/en/contact"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://marceline.studio/kontakt"/>
+  </url>
+  <url>
+    <loc>https://marceline.studio/impressum</loc>
+    <xhtml:link rel="alternate" hreflang="de" href="https://marceline.studio/impressum"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://marceline.studio/en/imprint"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://marceline.studio/impressum"/>
+  </url>
+  <url>
+    <loc>https://marceline.studio/datenschutz</loc>
+    <xhtml:link rel="alternate" hreflang="de" href="https://marceline.studio/datenschutz"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://marceline.studio/en/privacy"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://marceline.studio/datenschutz"/>
+  </url>
+  <url>
+    <loc>https://marceline.studio/en/</loc>
+    <xhtml:link rel="alternate" hreflang="de" href="https://marceline.studio/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://marceline.studio/en/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://marceline.studio/"/>
+  </url>
+  <url>
+    <loc>https://marceline.studio/en/how-it-works</loc>
+    <xhtml:link rel="alternate" hreflang="de" href="https://marceline.studio/so-funktioniert-es"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://marceline.studio/en/how-it-works"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://marceline.studio/so-funktioniert-es"/>
+  </url>
+  <url>
+    <loc>https://marceline.studio/en/for-studios-and-agencies</loc>
+    <xhtml:link rel="alternate" hreflang="de" href="https://marceline.studio/fuer-studios-und-agenturen"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://marceline.studio/en/for-studios-and-agencies"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://marceline.studio/fuer-studios-und-agenturen"/>
+  </url>
+  <url>
+    <loc>https://marceline.studio/en/contact</loc>
+    <xhtml:link rel="alternate" hreflang="de" href="https://marceline.studio/kontakt"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://marceline.studio/en/contact"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://marceline.studio/kontakt"/>
+  </url>
+  <url>
+    <loc>https://marceline.studio/en/imprint</loc>
+    <xhtml:link rel="alternate" hreflang="de" href="https://marceline.studio/impressum"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://marceline.studio/en/imprint"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://marceline.studio/impressum"/>
+  </url>
+  <url>
+    <loc>https://marceline.studio/en/privacy</loc>
+    <xhtml:link rel="alternate" hreflang="de" href="https://marceline.studio/datenschutz"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://marceline.studio/en/privacy"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://marceline.studio/datenschutz"/>
+  </url>
+</urlset>

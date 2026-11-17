@@ -1,0 +1,5 @@
+# Paths are relative to the build context (frontend/).
+node_modules
+dist
+parity
+**/*.tsbuildinfo

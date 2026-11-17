@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Marceline browser parity harness</title>
+  </head>
+  <body>
+    <!--
+      Test fixture, not a product page. Playwright hands a synthetic clip — or the images of one
+      synthetic photo set, which is why the input is `multiple` — to this input and calls
+      window.marcelineParity.run() or .runPhotos(); the real client code in src/lib does the
+      decoding and hashing.
+    -->
+    <h1>Browser parity harness</h1>
+    <input id="clip" type="file" multiple accept="video/*,image/*" />
+    <pre id="status">idle</pre>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

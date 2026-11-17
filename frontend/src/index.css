@@ -1,0 +1,369 @@
+@import "tailwindcss";
+
+/*
+  The design system's tokens for the **staff moderation SPA** (ADR 0004, ADR 0014).
+
+  The customer app (`frontend/customer/app/globals.css`, ADR 0036) applied this system first; this
+  file follows its decisions rather than re-deciding them. Read that one for the reasoning behind
+  the values themselves — the colour ramps, the type scale and the two dark blocks are identical on
+  purpose, so a staff screen and a customer screen are visibly the same product. Four things are
+  deliberately different here, and each is a rule of *this* surface:
+
+  1. **No font files.** The customer app self-hosts Instrument Sans / Instrument Serif / JetBrains
+     Mono under `public/fonts/`. This app ships none and uses each family's fallback stack — which
+     is exactly what the customer app renders while its woff2 arrives. Three reasons, in order of
+     weight:
+       - This SPA has no `public/` directory, so shipping them means a **second copy of the same
+         binaries** in the repository, a second OFL notice to keep with them, and two places to
+         re-subset when a family changes.
+       - The path would have to be `/fonts/…`, and this same build still serves the customer app's
+         rollback at `/app` (`CUSTOMER_APP=spa`, ADR 0028) behind a Caddy that publishes exactly
+         `/app`, `/app/*` and `/assets/*`. A `/fonts/…` request 404s there and works in
+         development — the failure mode the customer app's own comment warns about.
+       - The audience is one operator on a Tailscale-only host. The privacy argument that pays for
+         self-hosting on a public site (no third-party request, no reader's IP handed to a font
+         host) is already satisfied here by shipping nothing at all.
+     ADR 0028's actual rule — **never an auto-loaded external resource** — is upheld the strict way:
+     this stylesheet contains no `url()` at all, and `tokens.test.ts` fails on one.
+  2. **`blur-thumb` is present**, and it is the point. The customer app deliberately drops it (it
+     shows no copy of the material, issue #53); this app is the one surface the system's media rule
+     was written for — unreviewed media sits blurred on a `surface-inset` frame until a reviewer
+     asks to see it. `MediaGrid` is the only component allowed to render it.
+  3. **The staff vocabulary stays.** Nothing here carries a label, but for the avoidance of doubt:
+     the customer wording rules (`src/i18n/wording.test.ts`) govern customer strings only. A staff
+     screen says leak, case, confidence, band and distance, because that is what they are.
+  4. **Light and dark both**, from the operator's own system setting. `data-theme` on `<html>` is
+     the hook if an explicit switch is ever offered.
+
+  Spacing is not tokenised, for the same reason as in the customer app: the system's 4px grid *is*
+  Tailwind's default spacing scale, so a token layer would only be a second name for the same
+  number.
+*/
+@theme {
+  /*
+    Type. The stacks the customer app falls back to, used here as the faces themselves (note 1).
+    `--font-display` is a serif on purpose — the system sets display type in serif, and
+    Iowan/Georgia is a face every machine already has.
+  */
+  --font-display: "Iowan Old Style", Georgia, ui-serif, serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Display: serif, large and rare. Never below display-s, never in a table. */
+  --text-display-xl: 64px;
+  --text-display-xl--line-height: 60px;
+  --text-display-xl--font-weight: 400;
+  --text-display-xl--letter-spacing: -0.02em;
+  --text-display-l: 44px;
+  --text-display-l--line-height: 44px;
+  --text-display-l--font-weight: 400;
+  --text-display-l--letter-spacing: -0.02em;
+  --text-display-m: 32px;
+  --text-display-m--line-height: 34px;
+  --text-display-m--font-weight: 400;
+  --text-display-m--letter-spacing: -0.015em;
+  --text-display-s: 24px;
+  --text-display-s--line-height: 28px;
+  --text-display-s--font-weight: 400;
+  --text-display-s--letter-spacing: -0.01em;
+
+  /* Text: everything functional. */
+  --text-body-l: 17px;
+  --text-body-l--line-height: 26px;
+  --text-body: 15px;
+  --text-body--line-height: 23px;
+  --text-body-s: 13px;
+  --text-body-s--line-height: 20px;
+  --text-label: 13px;
+  --text-label--line-height: 16px;
+  --text-label--font-weight: 500;
+  --text-overline: 11px;
+  --text-overline--line-height: 14px;
+  --text-overline--font-weight: 600;
+  --text-overline--letter-spacing: 0.09em;
+  --text-caption: 12px;
+  --text-caption--line-height: 17px;
+  --text-button: 14px;
+  --text-button--line-height: 16px;
+  --text-button--font-weight: 600;
+  --text-button--letter-spacing: 0.01em;
+
+  /*
+    Code: every machine-readable string. This app is full of them — page ids, sha256 digests, PDQ
+    distances, hostnames, crawl URLs — and `hash` is the one for a digest, grouped in fours.
+  */
+  --text-mono: 13px;
+  --text-mono--line-height: 20px;
+  --text-mono-s: 11px;
+  --text-mono-s--line-height: 16px;
+  --text-mono-s--letter-spacing: 0.01em;
+  --text-hash: 13px;
+  --text-hash--line-height: 22px;
+  --text-hash--font-weight: 500;
+  --text-hash--letter-spacing: 0.04em;
+  --text-metric: 20px;
+  --text-metric--line-height: 24px;
+  --text-metric--font-weight: 500;
+  --text-metric--letter-spacing: -0.01em;
+
+  /*
+    Radii carry meaning. Anything holding evidence stays square (`rounded-none`): the queue tables,
+    the hash fields, the thumbnail frames. Chrome softens — `sm` for controls, `md` for cards, `lg`
+    for dialogs.
+  */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* Colour — light. The dark values live in the two override blocks below. */
+  --color-surface-000: #f6f2f1;
+  --color-surface-100: #ffffff;
+  --color-surface-200: #ede8e7;
+  --color-surface-300: #e2dcdb;
+  --color-surface-inset: #faf7f6;
+  --color-scrim: #171315a6;
+
+  --color-hairline: #ded6d5;
+  --color-hairline-strong: #c8bdbc;
+  --color-border-control: #7f7174;
+
+  --color-ink: #171315;
+  --color-ink-muted: #5c5154;
+  --color-ink-subtle: #665a5c;
+  --color-ink-inverse: #f5f0f1;
+
+  --color-brand: #b0111f;
+  --color-brand-hover: #8e0b17;
+  --color-brand-ink: #a1101d;
+  --color-brand-quiet: #fbe9eb;
+  --color-on-brand: #fff6f7;
+
+  /*
+    Violet is machine-made. In this app that is the largest single distinction on screen: a PDQ
+    match, a cluster the builder proposed, a row `decided_by=auto`, a scheduled job. A human
+    decision is neutral or red, and a reviewer should tell the two apart from across the room.
+  */
+  --color-accent: #5c34a8;
+  --color-accent-quiet: #f1ebfb;
+
+  /* A blue-shifted teal, never a green: resolved must not depend on hue against the red. */
+  --color-positive-ink: #0a6456;
+  --color-positive-quiet: #e2f3ef;
+  --color-caution-ink: #835507;
+  --color-caution-quiet: #fbf0dd;
+  --color-critical: var(--color-brand);
+  --color-critical-ink: var(--color-brand-ink);
+  --color-critical-quiet: var(--color-brand-quiet);
+
+  /* The Veil's planes and the glass panel that may sit on them. No staff screen composes one. */
+  --color-veil-brand: #b0111f1f;
+  --color-veil-accent: #5c34a81a;
+  --color-veil-ink: #1713150a;
+  --color-glass: #ffffffb3;
+  --blur-veil: 64px;
+  --blur-panel: 18px;
+
+  /*
+    Unreviewed media, blurred until it is asked for (note 2). A product rule, not a decoration: the
+    reviewer chooses to look, once, and the blur returns when the row loses focus.
+  */
+  --blur-thumb: 12px;
+
+  --color-focus: #b0111f;
+  --color-selection: #b0111f26;
+
+  --shadow-sm: 0 1px 2px #17131514;
+  --shadow-md: 0 6px 16px #1713151a;
+  --shadow-lg: 0 20px 48px #17131524;
+
+  /* Motion: 120ms for a state change, 180ms for a panel; fade and 4px of travel, nothing else. */
+  --ease-standard: cubic-bezier(0.2, 0, 0.2, 1);
+  --animate-shimmer: shimmer 1.4s linear infinite;
+
+  @keyframes shimmer {
+    from {
+      opacity: 0.55;
+    }
+    50% {
+      opacity: 1;
+    }
+    to {
+      opacity: 0.55;
+    }
+  }
+}
+
+/*
+  Dark. Unlayered on purpose, so these win over the `@layer theme` block Tailwind emits above,
+  whatever the order. `:not([data-theme="light"])` leaves room for an explicit light choice.
+*/
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-surface-000: #080607;
+    --color-surface-100: #100d0f;
+    --color-surface-200: #191517;
+    --color-surface-300: #231d20;
+    --color-surface-inset: #0c0a0b;
+    --color-scrim: #080607cc;
+
+    --color-hairline: #2a2326;
+    --color-hairline-strong: #3b3236;
+    --color-border-control: #7a6a6f;
+
+    --color-ink: #f5f0f1;
+    --color-ink-muted: #b6a9ad;
+    --color-ink-subtle: #968a8d;
+    --color-ink-inverse: #171315;
+
+    --color-brand: #d21f2e;
+    --color-brand-hover: #d8212f;
+    --color-brand-ink: #f2596a;
+    --color-brand-quiet: #2a1013;
+
+    --color-accent: #a583dd;
+    --color-accent-quiet: #231b33;
+
+    --color-positive-ink: #3fcfb5;
+    --color-positive-quiet: #0d2b28;
+    --color-caution-ink: #e0a83c;
+    --color-caution-quiet: #2e2213;
+
+    --color-veil-brand: #d21f2e2e;
+    --color-veil-accent: #a583dd24;
+    --color-veil-ink: #f5f0f10f;
+    --color-glass: #14101266;
+
+    --color-focus: #f2596a;
+    --color-selection: #f2596a33;
+
+    --shadow-sm: 0 1px 2px #00000080;
+    --shadow-md: 0 8px 24px #00000099;
+    --shadow-lg: 0 24px 64px #000000b3;
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-surface-000: #080607;
+  --color-surface-100: #100d0f;
+  --color-surface-200: #191517;
+  --color-surface-300: #231d20;
+  --color-surface-inset: #0c0a0b;
+  --color-scrim: #080607cc;
+
+  --color-hairline: #2a2326;
+  --color-hairline-strong: #3b3236;
+  --color-border-control: #7a6a6f;
+
+  --color-ink: #f5f0f1;
+  --color-ink-muted: #b6a9ad;
+  --color-ink-subtle: #968a8d;
+  --color-ink-inverse: #171315;
+
+  --color-brand: #d21f2e;
+  --color-brand-hover: #d8212f;
+  --color-brand-ink: #f2596a;
+  --color-brand-quiet: #2a1013;
+
+  --color-accent: #a583dd;
+  --color-accent-quiet: #231b33;
+
+  --color-positive-ink: #3fcfb5;
+  --color-positive-quiet: #0d2b28;
+  --color-caution-ink: #e0a83c;
+  --color-caution-quiet: #2e2213;
+
+  --color-veil-brand: #d21f2e2e;
+  --color-veil-accent: #a583dd24;
+  --color-veil-ink: #f5f0f10f;
+  --color-glass: #14101266;
+
+  --color-focus: #f2596a;
+  --color-selection: #f2596a33;
+
+  --shadow-sm: 0 1px 2px #00000080;
+  --shadow-md: 0 8px 24px #00000099;
+  --shadow-lg: 0 24px 64px #000000b3;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+:root {
+  /* Form controls and scrollbars follow the theme the operator is actually seeing. */
+  color-scheme: light dark;
+}
+
+body {
+  background-color: var(--color-surface-000);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+::selection {
+  background-color: var(--color-selection);
+}
+
+/*
+  One focus ring, everywhere — 2px solid at 2px offset, on every focusable element including table
+  rows and cards. Stated once here so no component has to remember it and none can drop it. This
+  app is driven from the keyboard (`lib/keyboard.ts`), so the ring is not a nicety.
+*/
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/*
+  Reduced motion: the travel goes, the fade stays (the system's own rule). Animations stop outright
+  — a skeleton's shimmer keeps its ground and simply holds still.
+*/
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-property: opacity !important;
+  }
+}
+
+/*
+  Phone first (issue #117), the CSS half of it — and *only* the CSS half.
+
+  This stylesheet also serves the SPA's copy of the customer app (`src/app/**`, ADR 0028's
+  rollback for `CUSTOMER_APP=spa`). That copy is on its way out with ADR 0036 and is deliberately
+  **not** re-laid-out here: it is what production falls back to, so it is left as it is apart
+  from the two rules below, which are the two that change whether a phone can be used at all and
+  which no markup has to know about. The phone-first layout itself lives in the Next app
+  (`frontend/customer/app/globals.css` carries the full reasoning).
+
+  The staff SPA is a desktop surface over Tailscale, so `pointer: coarse` almost never matches
+  here — and when it does (the operator on a tablet), bigger controls are right there too.
+*/
+@media (pointer: coarse) {
+  /* Under 16 px, Safari on iOS zooms the page in on focus and does not zoom back out. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  /* 30 px of control is fine for a mouse and a miss for a thumb. */
+  button,
+  select,
+  summary,
+  [role="button"],
+  a[download] {
+    min-height: 2.75rem;
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+}

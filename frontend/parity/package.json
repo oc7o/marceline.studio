@@ -1,0 +1,18 @@
+{
+  "name": "marceline-browser-parity",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "On-demand browser parity harness: runs the real decode+hash path in headless browsers. Kept out of the app's package.json so npm ci never downloads a browser.",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "browsers": "playwright install chromium",
+    "browsers-all": "playwright install chromium firefox webkit",
+    "browser-hashes": "node browser.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  }
+}

@@ -1,0 +1,851 @@
+name: marceline
+
+# Mail settings for the processes that send alerts (crawler workers: safety alerts on a new block;
+# scheduler). Containers only see variables listed here — `.env` is not mounted — so without this
+# a live crawl could never mail (issue #40). Deliberately not the whole `.env`: crawler containers
+# parse untrusted HTML and need no backup or DataForSEO credentials. Empty values mean "mail off".
+x-mail-env: &mail-env
+  EMAIL_BACKEND: ${EMAIL_BACKEND:-}
+  EMAIL_HOST: ${EMAIL_HOST:-}
+  EMAIL_PORT: ${EMAIL_PORT:-}
+  EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+  EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+  EMAIL_USE_TLS: ${EMAIL_USE_TLS:-}
+  EMAIL_USE_SSL: ${EMAIL_USE_SSL:-}
+  # Seconds. A mail server that never answers must not hang a worker that is sending an alert.
+  EMAIL_TIMEOUT: ${EMAIL_TIMEOUT:-10}
+  SAFETY_ALERT_TO: ${SAFETY_ALERT_TO:-}
+  SAFETY_ALERT_FROM: ${SAFETY_ALERT_FROM:-}
+  SAFETY_ALERT_MODERATION_URL: ${SAFETY_ALERT_MODERATION_URL:-}
+  # Adapter breakage alert (issue #22); falls back to the safety pair above when empty.
+  ADAPTER_ALERT_TO: ${ADAPTER_ALERT_TO:-}
+  ADAPTER_ALERT_FROM: ${ADAPTER_ALERT_FROM:-}
+  # Operator mail consolidation (2026-09-19, core/operator_mail.py): which event kinds
+  # (safety_incident, tdm_reservation, adapter_health) still mail the moment they happen instead
+  # of waiting for the one daily report. Empty = none — every process below that decides whether
+  # to send an immediate mail needs to see this, or `.env` setting it would do nothing wherever it
+  # is missing.
+  OPERATOR_MAIL_IMMEDIATE: ${OPERATOR_MAIL_IMMEDIATE:-}
+
+# Error reporting (issue #37, core/sentry.py). Off while SENTRY_DSN is empty; a DSN outside
+# Sentry's EU region refuses to start. Named here for every container that runs Django code —
+# `web`, the per-site crawlers and media workers, both crawl-runtime lanes, the scheduler and the
+# export listener — because a variable this file does not pass in is silently empty inside the
+# container for ever, whatever `.env` says (the DJANGO_CSRF_TRUSTED_ORIGINS bug of 2026-09-18).
+# Until 2026-09-18 that was exactly the state of error reporting on this host: `settings.py` read
+# SENTRY_DSN, `.env.example` documented it, and no container ever saw it, so the workers and the
+# scheduler — the processes that run unattended and are the whole reason for an error reporter —
+# could not report anything however the operator set it. A container keeps the environment it was
+# created with, so after changing either value recreate them (`make up`, `make workers`,
+# `make runtime`); `make status` reads the running value with `docker inspect`.
+x-sentry-env: &sentry-env
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
+  # Which code an event came from. `.env.example` has documented it all along and no container
+  # ever received it, so every development event would have arrived without a release.
+  MARCELINE_RELEASE: ${MARCELINE_RELEASE:-}
+
+# The deletion journal (ADR 0057, DPIA R24, issue #137). One append-only file per process in a
+# directory **outside the database**, so a `pg_restore` cannot roll its lines back and
+# `manage.py reapply_deletions` can replay them against the restored database. It belongs next to
+# the nightly dumps (`~/backups/marceline/journal`), because `infra/backup/backup-run.sh` pushes it
+# off-host under its own restic tag.
+#
+# The host directory is mounted at **the same path inside the container**, so `.env`'s one value is
+# both the mount source and what Django reads in either place, and the host-run management commands
+# (`suppress_creator`, `research_retention`, …) and these two containers append into one directory.
+# Each process writes its own segment file: the commands run as the operator and the containers as
+# root, and a single shared file would belong to whoever created it first.
+#
+# Only `web` and `scheduler` get it, and that is deliberate: they are the two containers that run a
+# journalled deletion (the admin's do-not-contact screen; every retention pass). A crawler or media
+# container parses untrusted HTML and must not hold a writable mount into the operator's backup
+# directory — and it runs no deletion path, so it would only ever write nothing there.
+
+# Crawl runtime lanes (ADR 0030). No mail settings: only the pages lane sends alerts and adds them.
+x-runtime-env: &runtime-env
+  DJANGO_ENV: dev
+  POSTGRES_HOST: db
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: ${POSTGRES_DB:-marceline}
+  POSTGRES_USER: ${POSTGRES_USER:-marceline}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-marceline}
+  CRAWLER_USER_AGENT: ${CRAWLER_USER_AGENT:-MarcelineBot/0.1}
+  RUNTIME_SITES: ${RUNTIME_SITES:-site20.example,site06.example}
+  CDN_HOST_DELAY_S: ${CDN_HOST_DELAY_S:-1}
+  RUNTIME_PAGE_THREADS: ${RUNTIME_PAGE_THREADS:-6}
+  RUNTIME_MEDIA_THREADS: ${RUNTIME_MEDIA_THREADS:-8}
+  RUNTIME_HASH_PROCESSES: ${RUNTIME_HASH_PROCESSES:-2}
+  # LLM extraction as repair when an adapter breaks (issue #22, ADR 0042). Off by default and it
+  # costs money per call, so it is passed in explicitly rather than left to a code default: a
+  # setting this file does not name is silently empty inside the container forever, whatever
+  # `.env` says (the DJANGO_CSRF_TRUSTED_ORIGINS bug of 2026-09-18). The pages lane parses, so
+  # the pages lane is the one that could ever repair.
+  CRAWLER_LLM_REPAIR_ENABLED: ${CRAWLER_LLM_REPAIR_ENABLED:-false}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  CRAWLER_LLM_MODEL: ${CRAWLER_LLM_MODEL:-}
+  CRAWLER_LLM_REPAIR_DAILY_CALLS_PER_SITE: ${CRAWLER_LLM_REPAIR_DAILY_CALLS_PER_SITE:-50}
+  # Machine-readable TDM/AI reservations in robots.txt (tripwire T2, issue #105). The pages lane
+  # refreshes each served site's robots.txt, so it is the runtime's place to notice one. Detection
+  # costs no request; the pause is off by default and changes what gets crawled when it is on.
+  ROBOTS_RESERVATION_DETECTION_ENABLED: ${ROBOTS_RESERVATION_DETECTION_ENABLED:-true}
+  ROBOTS_RESERVATION_PAUSE_ENABLED: ${ROBOTS_RESERVATION_PAUSE_ENABLED:-false}
+  # ADR 0041, issue #113: the dead media URL shape breaker. Only the media lane fetches media and
+  # calls `catalog.media_shapes.admit`/`record`, but it shares this anchor with the pages lane —
+  # the same shape as MATCHING_EMBEDDINGS_ENABLED below. Still off by default.
+  MEDIA_URL_BREAKER_ENABLED: ${MEDIA_URL_BREAKER_ENABLED:-false}
+  # Same gap class, found alongside #113 by the gap sweep: `matching/media_worker.py` reads
+  # MATCHING_CROP_BLACK_BARS (off by default) to decide whether it crops letterboxing before
+  # hashing, and no service passed it in either. Only the media lane ever hashes media.
+  MATCHING_CROP_BLACK_BARS: ${MATCHING_CROP_BLACK_BARS:-false}
+  # Frame embeddings, the second content signal (ADR 0037). `crawl_runtime.py` reads this in both
+  # lanes (only the media lane ever embeds; the pages lane's `embed` is always False) and refuses
+  # to start the media lane if it is on and the model file is missing — so a missing passthrough
+  # here would have looked like "the operator turned it on and the media lane silently never
+  # embedded", not a crash (issue #101, same gap class as CRAWLER_LLM_REPAIR_ENABLED above). Still
+  # off by default; the model file also has to be fetched into the container once
+  # (`manage.py fetch_embedding_model`) before switching this on does anything. The path below
+  # defaults into the `embedding-models` volume (issue #101 follow-up), mounted only by
+  # `crawler-media` (the pages lane never embeds, so it never mounts it); an operator-set
+  # MATCHING_EMBEDDING_MODEL_PATH still overrides it.
+  MATCHING_EMBEDDINGS_ENABLED: ${MATCHING_EMBEDDINGS_ENABLED:-false}
+  MATCHING_EMBEDDING_MODEL_PATH: ${MATCHING_EMBEDDING_MODEL_PATH:-/var/lib/marceline/embedding-models/mobileclip_s0_fp32.onnx}
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-marceline}
+      POSTGRES_USER: ${POSTGRES_USER:-marceline}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-marceline}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    # `uploads` is an internal network with no route out (ADR 0044): it is the only thing
+    # `fingerprint-worker` is attached to, so the process that decodes a customer's uploaded video
+    # cannot reach the internet at all, whatever ffmpeg is talked into. Postgres has to be on it
+    # because the worker claims its jobs from the database; `default` keeps every other service
+    # reaching it exactly as before. Adding this recreates the `db` container on the next
+    # `make up` (a restart, no data loss — the data is in the pgdata volume).
+    networks: [default, uploads]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  web:
+    build: ../backend
+    command: python manage.py runserver 0.0.0.0:8000
+    environment:
+      # `mail-env` too since ADR 0054: this container sends the password-reset and verification
+      # mails (a request on development's own surface, and an invite that has just been redeemed).
+      <<: [*mail-env, *sentry-env]
+      DJANGO_ENV: dev
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-marceline}
+      POSTGRES_USER: ${POSTGRES_USER:-marceline}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-marceline}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      # The Next customer app (ADR 0036) relays a write with the browser's public origin so Django
+      # can check it (frontend/customer/lib/django.ts), and Django compares that against this list.
+      # It was in settings.py and .env.example but never passed into the container, so it was always
+      # empty here and **every POST from :3000 failed the CSRF check** — sign-in and sign-out
+      # included, which is how it was found on 2026-09-18. Production sets its own.
+      DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-}
+      # ADR 0016 / ADR 0040 amendment. Both default off in settings.py; neither was passed in
+      # here, so setting them in .env did nothing at all — the same silent gap that left
+      # DJANGO_CSRF_TRUSTED_ORIGINS empty above. On by operator decision 2026-09-18.
+      BROWSER_CAPTURE_ENABLED: ${BROWSER_CAPTURE_ENABLED:-false}
+      MATCHING_METADATA_CANDIDATES_ENABLED: ${MATCHING_METADATA_CANDIDATES_ENABLED:-false}
+      # ADR 0041, issue #113: the dead media URL shape breaker. settings.py has read it since the
+      # ADR and no service ever passed it in, so it could never be switched on. `web` reads it
+      # directly (catalog/media_shapes.py `shape_lines`, via `request_report`) to say "breaker off"
+      # on the Site admin page — without this, that line would lie whenever `.env` turned the
+      # breaker on for the workers below but `web` still read it as empty. Still off by default.
+      MEDIA_URL_BREAKER_ENABLED: ${MEDIA_URL_BREAKER_ENABLED:-false}
+      # ADR 0035. Read by marceline/notices/services.py, which runs in `web` — and until now
+      # never passed in, so `sandbox_send` refused every draft however carefully .env named a
+      # recipient. Found by `make status`'s settings-vs-compose check on its first real run.
+      # The BILLING_SELLER_* and DATAFORSEO_* pairs are deliberately NOT here: they are read only
+      # by `issue_invoices` and `discover_sources`, which the operator runs on the host, where
+      # core.env.load_dotenv reads .env directly.
+      NOTICE_SANDBOX_RECIPIENTS: ${NOTICE_SANDBOX_RECIPIENTS:-}
+      NOTICE_SANDBOX_FROM: ${NOTICE_SANDBOX_FROM:-}
+      # The rest of what decides whether a relayed customer request is accepted, and whether the
+      # session it creates works. All default to empty, so this changes nothing until the operator
+      # sets one in `.env` — the point is that setting one then *has an effect*, instead of being
+      # read by settings.py, documented in .env.example and silently dropped at the container
+      # boundary (`backend/marceline/tests/test_compose_env.py` fails when one goes missing again).
+      #
+      # LOGIN_TRUSTED_PROXIES is the one with teeth: ADR 0023's per-IP login limit ignores
+      # X-Forwarded-For at 0, so with the customer app in front every customer's attempts count
+      # against the Next container's address and share one bucket of twenty. The BFF forwards the
+      # header unchanged for exactly this reason; the count has to be told to read it.
+      DJANGO_PUBLIC_SURFACE: ${DJANGO_PUBLIC_SURFACE:-}
+      LOGIN_TRUSTED_PROXIES: ${LOGIN_TRUSTED_PROXIES:-}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-}
+      CSRF_COOKIE_SECURE: ${CSRF_COOKIE_SECURE:-}
+      # ADR 0028: record production cache purges after decisions and safety blocks; the `export`
+      # service (which holds the signing key) delivers them. Off until production exists.
+      CACHE_PURGE_OUTBOX: ${CACHE_PURGE_OUTBOX:-false}
+      # Issue #92: the admin is where a customer is granted access, and the admin runs here — so
+      # the guard on missing *Unternehmer* evidence is read in this container or nowhere. `warn`
+      # is the code default; `refuse` makes the membership form reject the save.
+      ONBOARDING_BUSINESS_STATUS_GUARD: ${ONBOARDING_BUSINESS_STATUS_GUARD:-warn}
+      # Issue #115, ADR 0052: onboarding by invite. The redeem routes and the staff tooling both
+      # run in this container, so without these here the feature is silently off and an issued
+      # invite's link points nowhere. Off by default; ONBOARDING_DOCUMENTS empty refuses the
+      # accept step, which keeps the flow closed until the documents are configured.
+      ONBOARDING_INVITES_ENABLED: ${ONBOARDING_INVITES_ENABLED:-false}
+      ONBOARDING_INVITE_EXPIRY_DAYS: ${ONBOARDING_INVITE_EXPIRY_DAYS:-14}
+      ONBOARDING_INVITE_BASE_URL: ${ONBOARDING_INVITE_BASE_URL:-}
+      ONBOARDING_DOCUMENTS: ${ONBOARDING_DOCUMENTS:-}
+      # ADR 0055: proof of control of the creator's own platform account. Off by default; with it
+      # off every /api/v1/app/verification route answers 404 and no code can be issued. Named here
+      # rather than left to the code default, because a setting this file does not pass in is
+      # silently empty inside the container for ever, whatever `.env` says — and this one is
+      # dangerous in the quiet direction: the operator would switch it on, the creator would see a
+      # 404, and nothing anywhere would say why.
+      ACCOUNT_CONTROL_VERIFICATION_ENABLED: ${ACCOUNT_CONTROL_VERIFICATION_ENABLED:-false}
+      # ADR 0056 (issue #133): the creator's own "send me an export" and "delete my data" requests.
+      # Off by default; with it off every /api/v1/app/data-requests route answers one plain 404.
+      # Named here for the same reason as the line above — a variable this file does not pass in is
+      # empty inside the container for ever, and the failure would be quiet: the creator who cannot
+      # reach the admin would see a step that is simply not there.
+      CUSTOMER_DATA_REQUESTS_ENABLED: ${CUSTOMER_DATA_REQUESTS_ENABLED:-false}
+      # ADR 0054, issue #149: the two mails a customer can receive — a password reset and an
+      # address verification. **Only development sends them**, and only these two processes can:
+      # `web` answers a request made on its own (Tailscale) surface and completes an invite, and
+      # `export` applies the outbox items the public host accepted (`pull_customer_writes`). Off by
+      # default, and with no transport configured nothing is issued either (ADR 0054 §1) — so the
+      # mail settings of `x-mail-env` have to reach the same two processes.
+      ACCOUNT_EMAIL_FLOWS_ENABLED: ${ACCOUNT_EMAIL_FLOWS_ENABLED:-false}
+      ACCOUNT_MAIL_FROM: ${ACCOUNT_MAIL_FROM:-noreply@marceline.studio}
+      ACCOUNT_MAIL_REPLY_TO: ${ACCOUNT_MAIL_REPLY_TO:-contact@marceline.studio}
+      ACCOUNT_PASSWORD_RESET_TTL_MINUTES: ${ACCOUNT_PASSWORD_RESET_TTL_MINUTES:-60}
+      ACCOUNT_VERIFICATION_TTL_HOURS: ${ACCOUNT_VERIFICATION_TTL_HOURS:-48}
+      # ADR 0034: encrypted rights proofs. Unset keys = uploads refused (503). The directory is a
+      # named volume outside the mounted source tree; never point it into ../backend.
+      RIGHTS_VAULT_KEYS: ${RIGHTS_VAULT_KEYS:-}
+      RIGHTS_VAULT_DIR: /var/lib/marceline/rights-vault
+      # ADR 0047, issue #98: the key every recorded "no" is hashed with. The admin screen that
+      # records one runs in this container, so without it here the screen refuses — which is the
+      # safe direction, but it would be refusing while `.env` looks right. `may_contact` run on
+      # the host reads `.env` directly (core.env.load_dotenv), like the BILLING_SELLER_* pair
+      # above. Never rotate this key: it orphans every stored objection at once.
+      DO_NOT_CONTACT_HMAC_KEY: ${DO_NOT_CONTACT_HMAC_KEY:-}
+      # ADR 0044, issue #59: cloud fingerprinting. Off by default; with it off every
+      # /api/v1/app/uploads route answers 404. Named here rather than left to the code default
+      # because a setting this file does not pass in is silently empty inside the container for
+      # ever, whatever `.env` says. `web` writes the arriving chunks into the spool volume; the
+      # `fingerprint-worker` service reads them and deletes them. The numeric defaults below are
+      # `env_int`/`env_float`'s own defaults in `settings.py`, spelled out — leaving the fallback
+      # empty is harmless (the helpers fall back to the same code default on an empty string) but
+      # hides the effective value from anyone reading this file, which is what every other
+      # passthrough here avoids; `marceline/tests/test_compose_env.py` pins them so the two
+      # cannot drift apart.
+      CLOUD_FINGERPRINTING_ENABLED: ${CLOUD_FINGERPRINTING_ENABLED:-false}
+      CLOUD_UPLOAD_SPOOL_DIR: /var/lib/marceline/upload-spool
+      CLOUD_UPLOAD_CHUNK_BYTES: ${CLOUD_UPLOAD_CHUNK_BYTES:-8388608}
+      CLOUD_UPLOAD_MAX_BYTES: ${CLOUD_UPLOAD_MAX_BYTES:-10737418240}
+      CLOUD_UPLOAD_SPOOL_MAX_BYTES: ${CLOUD_UPLOAD_SPOOL_MAX_BYTES:-42949672960}
+      CLOUD_UPLOAD_DAILY_BYTES_PER_ORG: ${CLOUD_UPLOAD_DAILY_BYTES_PER_ORG:-64424509440}
+      CLOUD_UPLOAD_TTL_HOURS: ${CLOUD_UPLOAD_TTL_HOURS:-6}
+      # ADR 0057: the admin screen that records a "no" runs in this container, so its journal line
+      # has to be written here. Why it is a bind mount at the same path: the comment above
+      # `services:`. Not a merge anchor, because this block already has one `<<` key.
+      DELETION_JOURNAL_DIR: ${DELETION_JOURNAL_DIR:-/var/lib/marceline/deletion-journal}
+      DELETION_JOURNAL_SEGMENT: web
+    ports:
+      # Never 0.0.0.0 on a public host: Docker-published ports bypass the host firewall.
+      - "${WEB_BIND:-127.0.0.1}:8000:8000"
+    volumes:
+      - ../backend:/app
+      - rights-vault:/var/lib/marceline/rights-vault
+      - upload-spool:/var/lib/marceline/upload-spool
+      - ${DELETION_JOURNAL_DIR:-/var/lib/marceline/deletion-journal}:${DELETION_JOURNAL_DIR:-/var/lib/marceline/deletion-journal}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Live crawling: only with `make workers` (--profile workers), never with plain `make up`.
+  # One crawler per site: per-host delays are kept in-process, so never two workers for one site.
+  crawler-site01: &crawler
+    build: ../backend
+    command: python manage.py crawl_worker --site site01.example
+    profiles: ["workers"]
+    restart: unless-stopped
+    environment:
+      <<: [*mail-env, *sentry-env]
+      DJANGO_ENV: dev
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-marceline}
+      POSTGRES_USER: ${POSTGRES_USER:-marceline}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-marceline}
+      CRAWLER_USER_AGENT: ${CRAWLER_USER_AGENT:-MarcelineBot/0.1}
+      # LLM extraction as repair when an adapter breaks (issue #22, ADR 0042). Off by default and
+      # it costs money per call. Named here rather than left to the code default because a
+      # setting this file does not pass in is silently empty inside the container for ever,
+      # whatever `.env` says — the DJANGO_CSRF_TRUSTED_ORIGINS bug of 2026-09-18. Inherited by
+      # every other crawler service through the `&crawler` anchor.
+      CRAWLER_LLM_REPAIR_ENABLED: ${CRAWLER_LLM_REPAIR_ENABLED:-false}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      CRAWLER_LLM_MODEL: ${CRAWLER_LLM_MODEL:-}
+      CRAWLER_LLM_REPAIR_DAILY_CALLS_PER_SITE: ${CRAWLER_LLM_REPAIR_DAILY_CALLS_PER_SITE:-50}
+      # Machine-readable TDM/AI reservations in robots.txt (issue #105). This process
+      # is one of the two that refresh a site's robots.txt, so it is where the reservation is seen.
+      # Detection is on and costs no request; the automatic pause is off — turning it on changes
+      # what gets crawled.
+      ROBOTS_RESERVATION_DETECTION_ENABLED: ${ROBOTS_RESERVATION_DETECTION_ENABLED:-true}
+      ROBOTS_RESERVATION_PAUSE_ENABLED: ${ROBOTS_RESERVATION_PAUSE_ENABLED:-false}
+    volumes:
+      - ../backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+
+  crawler-site02:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site02.example
+
+  crawler-site03:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site03.example
+
+  crawler-site04:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site04.example
+
+  # KVS template sites (crawler/sites/kvs.py).
+  crawler-site19:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site19.example
+
+  crawler-site18:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site18.example
+
+  crawler-site22:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site22.example
+
+  crawler-site05:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site05.example
+
+  crawler-site06:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site06.example
+
+  crawler-site07:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site07.example
+
+  crawler-site08:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site08.example
+
+  crawler-site20:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site20.example
+
+  crawler-site17:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site17.example
+
+  crawler-site21:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site21.example
+
+  crawler-site09:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site09.example
+
+  crawler-site10:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site10.example
+
+  crawler-site13:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site13.example
+
+  # Reviewed 2026-09-18, not enabled: the adapters exist, the sites stay disabled until the
+  # operator enables them (catalog/sources.py). Profile `hold` is never
+  # started by `make workers`; to enable, switch a pair to `workers`, add it to WORKERS in the
+  # Makefile and set the site policy to True.
+  crawler-site14:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site14.example
+    profiles: ["hold"]
+
+  crawler-site16:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site16.example
+    profiles: ["hold"]
+
+  crawler-site11:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site11.example
+
+  # On hold (operator, 2026-09-17): not crawled. Profile
+  # `hold` is never started by `make workers`; to enable, switch it to `workers` together with the
+  # site policy.
+  crawler-site12:
+    <<: *crawler
+    command: python manage.py crawl_worker --site site12.example
+    profiles: ["hold"]
+
+  # One media worker per site (media hosts don't overlap between sites; delays are per process).
+  media-site01: &media
+    build: ../backend
+    command: python manage.py media_worker --site site01.example
+    profiles: ["workers"]
+    restart: unless-stopped
+    environment:
+      <<: *sentry-env
+      DJANGO_ENV: dev
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-marceline}
+      POSTGRES_USER: ${POSTGRES_USER:-marceline}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-marceline}
+      CRAWLER_USER_AGENT: ${CRAWLER_USER_AGENT:-MarcelineBot/0.1}
+      # ADR 0041, issue #113: the dead media URL shape breaker. `matching/media_worker.py` is the
+      # one place media is requested, and it calls `catalog.media_shapes.admit`/`record` on every
+      # fetch — settings.py has read MEDIA_URL_BREAKER_ENABLED since the ADR and no service ever
+      # passed it in, so the breaker could never suppress a shape however `.env` was set. Still off
+      # by default; the counters are kept either way.
+      MEDIA_URL_BREAKER_ENABLED: ${MEDIA_URL_BREAKER_ENABLED:-false}
+      # Same gap class, found alongside #113 by the gap sweep: `matching/media_worker.py` reads
+      # MATCHING_CROP_BLACK_BARS (off by default) to decide whether it crops letterboxing before
+      # hashing, and no service passed it in either.
+      MATCHING_CROP_BLACK_BARS: ${MATCHING_CROP_BLACK_BARS:-false}
+      # Frame embeddings, the second content signal (ADR 0037). settings.py has read
+      # MATCHING_EMBEDDINGS_ENABLED since the ADR and no service ever passed it in, so the media
+      # lane could never compute a sketch however .env was set (issue #101, found by the Art. 30
+      # record). Still off by default; the model file also has to be fetched into this container
+      # once (`manage.py fetch_embedding_model`) before switching this on does anything. The path
+      # below defaults into the `embedding-models` volume (issue #101 follow-up) so a fetched file
+      # survives `--force-recreate` instead of living in the container's writable layer; an
+      # operator-set MATCHING_EMBEDDING_MODEL_PATH still overrides it.
+      MATCHING_EMBEDDINGS_ENABLED: ${MATCHING_EMBEDDINGS_ENABLED:-false}
+      MATCHING_EMBEDDING_MODEL_PATH: ${MATCHING_EMBEDDING_MODEL_PATH:-/var/lib/marceline/embedding-models/mobileclip_s0_fp32.onnx}
+    volumes:
+      - ../backend:/app
+      - embedding-models:/var/lib/marceline/embedding-models
+    depends_on:
+      db:
+        condition: service_healthy
+
+  media-site02:
+    <<: *media
+    command: python manage.py media_worker --site site02.example
+
+  media-site03:
+    <<: *media
+    command: python manage.py media_worker --site site03.example
+
+  media-site04:
+    <<: *media
+    command: python manage.py media_worker --site site04.example
+
+  # KVS sites serve screenshots from their own host (site19: imgcdn.site19.example).
+  media-site19:
+    <<: *media
+    command: python manage.py media_worker --site site19.example
+
+  media-site18:
+    <<: *media
+    command: python manage.py media_worker --site site18.example
+
+  media-site22:
+    <<: *media
+    command: python manage.py media_worker --site site22.example
+
+  # site05 posters: static-eu-cdn.site05.example; site06 posters: cdn2.site06-cdn.example and
+  # img.site06-cdn.example (not used by any other site).
+  media-site05:
+    <<: *media
+    command: python manage.py media_worker --site site05.example
+
+  media-site06:
+    <<: *media
+    command: python manage.py media_worker --site site06.example
+
+  # site07 posters come from site07.example itself (/media/cache/resolve/video/img/…).
+  media-site07:
+    <<: *media
+    command: python manage.py media_worker --site site07.example
+
+  # site08 and site20.example both serve screenshots from their own host, so no shared media host.
+  media-site08:
+    <<: *media
+    command: python manage.py media_worker --site site08.example
+
+  media-site20:
+    <<: *media
+    command: python manage.py media_worker --site site20.example
+
+  # site17.example and site21.example also serve screenshots from their own host, no shared media host.
+  media-site17:
+    <<: *media
+    command: python manage.py media_worker --site site17.example
+
+  media-site21:
+    <<: *media
+    command: python manage.py media_worker --site site21.example
+
+  # site09 serves its single WebP frame per video from image-cdn.site09.example (its own CDN).
+  media-site09:
+    <<: *media
+    command: python manage.py media_worker --site site09.example
+
+  # site10 posters come from thumb-cdn.shared-cdn.example, a *shared* third-party CDN. No other
+  # enabled site uses it today; if one ever does, these two need a shared worker (see CLAUDE.md).
+  media-site10:
+    <<: *media
+    command: python manage.py media_worker --site site10.example
+
+  # site11 spans three of its own hosts (site11.example, n1.site11.example, cdn.site11.example). One
+  # worker is still correct: PoliteClient keeps its delay per host, and no other site uses them.
+  media-site13:
+    <<: *media
+    command: python manage.py media_worker --site site13.example
+
+  # On hold with their crawlers (see crawler-site14). site14's pictures all come from
+  # the network's pics.network.example hosts, site16's from the site itself.
+  media-site14:
+    <<: *media
+    command: python manage.py media_worker --site site14.example
+    profiles: ["hold"]
+
+  media-site16:
+    <<: *media
+    command: python manage.py media_worker --site site16.example
+    profiles: ["hold"]
+
+  media-site11:
+    <<: *media
+    command: python manage.py media_worker --site site11.example
+
+  # Crawl runtime (ADR 0030, issue #75; docs/runbooks/crawl-runtime.md): one process per lane for
+  # every site in RUNTIME_SITES instead of two containers per site. Profile `runtime` only
+  # (`make runtime`), never started by `make up` or `make workers`. Politeness lives in the database
+  # (core.HostSlot), so it holds across lanes, threads and the per-site workers above. The runtime
+  # takes each served site's per-site lock: a site is served by whichever process holds it first,
+  # so stop a site's crawler-/media- containers before handing it to the runtime (and start the
+  # workers with WORKERS_SKIP, or they restart-loop on the taken lock).
+  # Default RUNTIME_SITES = the soak pair; `all` after the cut-over. Code changes and migrations
+  # need no manual restart: each lane restarts itself when the applied migrations change.
+  crawler-pages:
+    build: ../backend
+    command: python manage.py crawl_runtime --lane pages
+    profiles: ["runtime"]
+    restart: unless-stopped
+    # tini as PID 1: reaps anything orphaned below the lane and forwards SIGTERM.
+    init: true
+    # Above the lane's own drain period (80 s): in-flight tasks finish or are handed back.
+    stop_grace_period: 100s
+    # Measured target ~150 MiB (ADR 0030); the lane restarts itself above RUNTIME_MAX_RSS_MB.
+    mem_limit: 640m
+    environment:
+      # Safety alerts are sent when the pages lane stores a blocked page: mail settings here only.
+      <<: [*mail-env, *runtime-env, *sentry-env]
+      RUNTIME_MAX_RSS_MB: "400"
+    volumes:
+      - ../backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Media lane: up to 8 fetch threads with bodies of up to 20 MiB in flight, plus two hash
+  # children (~50-70 MiB each) and a transient ffmpeg per preview clip.
+  crawler-media:
+    build: ../backend
+    command: python manage.py crawl_runtime --lane media
+    profiles: ["runtime"]
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 100s
+    mem_limit: 1280m
+    environment:
+      <<: [*runtime-env, *sentry-env]
+      RUNTIME_MAX_RSS_MB: "600"
+    volumes:
+      - ../backend:/app
+      - embedding-models:/var/lib/marceline/embedding-models
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # site12 thumbnails come from tn1.site12.example (a CDN CNAME no other site uses); the og:image
+  # fallback is on site12.example itself. On hold like crawler-site12 (profile `hold`).
+  media-site12:
+    <<: *media
+    command: python manage.py media_worker --site site12.example
+    profiles: ["hold"]
+
+  scheduler:
+    build: ../backend
+    command: python manage.py scheduler
+    profiles: ["workers"]
+    restart: unless-stopped
+    environment:
+      <<: [*mail-env, *sentry-env]
+      # safety_digest (docs/safety.md): the UTC hour the one consolidated safety mail goes out at.
+      # Only the scheduler sends it, so it is set here and not in the shared mail anchor.
+      SAFETY_DIGEST_HOUR_UTC: ${SAFETY_DIGEST_HOUR_UTC:-6}
+      # sync_targets (issue #71) stays skipped until this is true in .env.
+      TARGETED_INDEXING_ENABLED: ${TARGETED_INDEXING_ENABLED:-false}
+      # page_retention (ADR 0029 amendment 2026-09-17) stays skipped until this is true in .env.
+      # settings.py has read it since the amendment and nothing passed it in, so the job could
+      # never be switched on and no deactivated page was ever deleted (issue #87). Deletion is irreversible: run `page_retention --dry-run`
+      # first, and switch this on only by operator decision.
+      PAGE_RETENTION_ENABLED: ${PAGE_RETENTION_ENABLED:-false}
+      # safety_retention (docs/safety.md, issue #100) stays skipped until this is true in .env.
+      # Same class of gap as PAGE_RETENTION_ENABLED above: a switch settings.py reads is worthless
+      # if no compose service passes it in. Deletion is irreversible: run
+      # `safety_retention --dry-run` first, and switch this on only by operator decision.
+      SAFETY_RETENTION_ENABLED: ${SAFETY_RETENTION_ENABLED:-false}
+      # customer_data_retention (ADR 0045, issue #85) stays skipped until this is true in .env;
+      # the window is the operator's 30-day promise. A setting this file passes to nobody is empty
+      # inside the container whatever .env says (marceline/tests/test_compose_env.py).
+      CUSTOMER_DATA_DELETION_ENABLED: ${CUSTOMER_DATA_DELETION_ENABLED:-false}
+      CUSTOMER_DATA_RETENTION_DAYS: ${CUSTOMER_DATA_RETENTION_DAYS:-30}
+      # research_retention (ADR 0048, issues #103, #104) stays skipped until this is true in .env:
+      # discovery query text is blanked past its period, prospect research nobody acted on is
+      # forgotten, and a catalogue name nothing uses any more is deleted. The three periods are the
+      # operator's to confirm, so they are passed through too - a period this file names to nobody
+      # would silently read as its code default (marceline/tests/test_compose_env.py).
+      RESEARCH_RETENTION_ENABLED: ${RESEARCH_RETENTION_ENABLED:-false}
+      SEARCH_QUERY_RETENTION_DAYS: ${SEARCH_QUERY_RETENTION_DAYS:-30}
+      PROSPECT_RESEARCH_RETENTION_DAYS: ${PROSPECT_RESEARCH_RETENTION_DAYS:-90}
+      CREATOR_NAME_RETENTION_DAYS: ${CREATOR_NAME_RETENTION_DAYS:-90}
+      # invite_retention (ADR 0052 amendment: an unredeemed invite held
+      # personal data with no deletion clock) stays skipped until this is true in .env. Same class
+      # of gap as PAGE_RETENTION_ENABLED above: a switch settings.py reads is worthless if no
+      # compose service passes it in. Deletion is irreversible: run `invite_retention --dry-run`
+      # first, and switch this on only by operator decision.
+      INVITE_RETENTION_ENABLED: ${INVITE_RETENTION_ENABLED:-false}
+      ONBOARDING_INVITE_RETENTION_DAYS: ${ONBOARDING_INVITE_RETENTION_DAYS:-30}
+      # crawl_seeds: seed tasks per prospect per rolling 24 hours.
+      PROSPECT_DAILY_SEED_CAP: ${PROSPECT_DAILY_SEED_CAP:-4}
+      # catalogue_share (issue #107, ADR 0049): the share of a site's own catalogue we may hold,
+      # ever indexed, before the operator is mailed once. Only this container evaluates it, so it
+      # is set here. **Monitoring only** — crossing it pauses nothing and disables nothing. A
+      # setting this file passes to nobody is empty inside the container whatever .env says
+      # (marceline/tests/test_compose_env.py); here that would mean the code default forever.
+      CATALOGUE_SHARE_ALERT_PERCENT: ${CATALOGUE_SHARE_ALERT_PERCENT:-25}
+      DJANGO_ENV: dev
+      BROWSER_CAPTURE_ENABLED: ${BROWSER_CAPTURE_ENABLED:-false}
+      MATCHING_METADATA_CANDIDATES_ENABLED: ${MATCHING_METADATA_CANDIDATES_ENABLED:-false}
+      # `match_references` (run here every 3 h) also refreshes the second signal's own candidates
+      # when this is on (matching/management/commands/match_references.py); the same gap as
+      # MATCHING_METADATA_CANDIDATES_ENABLED above, and the reason MATCHING_EMBEDDINGS_ENABLED
+      # has to reach the scheduler as well as the media lane (issue #101). No model needed here:
+      # this container only compares sketches already stored, never computes one.
+      MATCHING_EMBEDDINGS_ENABLED: ${MATCHING_EMBEDDINGS_ENABLED:-false}
+      # The reference-side crop grid (ADR 0039): `match_references` consults it here too
+      # (matching/crop_index.py `enabled()`). Same gap, found alongside MATCHING_EMBEDDINGS_ENABLED
+      # while checking issue #101 — settings.py has read it since the ADR and no service ever
+      # passed it in.
+      MATCHING_REFERENCE_CROP_GRID: ${MATCHING_REFERENCE_CROP_GRID:-false}
+      # discovery (issue #20) stays skipped until this is true in .env; both it and every manual
+      # `discover_sources` run share the same spend guard below (DataForSEO, pay-per-query).
+      DISCOVERY_SCHEDULE_ENABLED: ${DISCOVERY_SCHEDULE_ENABLED:-false}
+      DATAFORSEO_LOGIN: ${DATAFORSEO_LOGIN:-}
+      DATAFORSEO_PASSWORD: ${DATAFORSEO_PASSWORD:-}
+      DISCOVERY_LOCATION_CODE: ${DISCOVERY_LOCATION_CODE:-2840}
+      DISCOVERY_LANGUAGE: ${DISCOVERY_LANGUAGE:-en}
+      DISCOVERY_MAX_CALLS_PER_RUN: ${DISCOVERY_MAX_CALLS_PER_RUN:-60}
+      DISCOVERY_DAILY_BUDGET_USD: ${DISCOVERY_DAILY_BUDGET_USD:-0.25}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-marceline}
+      POSTGRES_USER: ${POSTGRES_USER:-marceline}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-marceline}
+      # ADR 0057: every retention pass above deletes, and every one of them appends a line here.
+      # Without this passthrough the scheduler would delete and journal nothing, so a restore would
+      # silently undo months of retention with no record of what to re-apply (DPIA R24).
+      DELETION_JOURNAL_DIR: ${DELETION_JOURNAL_DIR:-/var/lib/marceline/deletion-journal}
+      DELETION_JOURNAL_SEGMENT: scheduler
+    volumes:
+      - ../backend:/app
+      - ${DELETION_JOURNAL_DIR:-/var/lib/marceline/deletion-journal}:${DELETION_JOURNAL_DIR:-/var/lib/marceline/deletion-journal}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # The export listener production fetches signed customer bundles from (ADR 0028,
+  # docs/runbooks/production.md "Data"). Profile `export`: never started by `make up` or
+  # `make workers`. Published ONLY on this VPS's Tailscale address (EXPORT_BIND, no default); the
+  # tailnet ACL admits the production node alone. Its URL allowlist is /internal/v1/export/… and
+  # nothing else (DJANGO_PUBLIC_SURFACE=export). It also delivers the purge outbox:
+  # `docker compose -f infra/compose.yaml exec -T export python manage.py send_cache_purges
+  # --flagged-within-minutes 10` from the host's crontab every 5 minutes. And it pulls customer
+  # writes from production's outbox (ADR 0028 write-path amendment): `… exec -T export python
+  # manage.py pull_customer_writes` every minute.
+  export:
+    build: ../backend
+    command:
+      - gunicorn
+      - marceline.wsgi:application
+      - --bind
+      - 0.0.0.0:8010
+      - --workers
+      - "2"
+      # Threads (the gthread worker) and a long deadline because of the upload relay (ADR 0044 §9):
+      # production streams a customer's chunk through as it reads it, so this request is open for as
+      # long as that customer's uplink needs for 8 MiB. A 30 s request timeout would kill the worker
+      # mid-upload on any slow connection.
+      - --threads
+      - "4"
+      - --timeout
+      - "600"
+      - --no-control-socket
+    profiles: ["export"]
+    restart: unless-stopped
+    environment:
+      # `mail-env` too since ADR 0054: `pull_customer_writes` runs here, so this is the process
+      # that sends the mail a request accepted on the public host asked for (ADR 0054 §1).
+      <<: [*mail-env, *sentry-env]
+      DJANGO_ENV: dev
+      DJANGO_DEBUG: "false"
+      MARCELINE_ROLE: dev
+      DJANGO_PUBLIC_SURFACE: export
+      DJANGO_ALLOWED_HOSTS: ${EXPORT_BIND:-127.0.0.1}
+      # The export writes nothing: cases are read as `sync_cases` left them.
+      CASE_SYNC_ON_READ: "false"
+      # Cloud fingerprinting's relay receiver (ADR 0044 §9, amendment 2026-09-19). This listener is
+      # the one address production can reach over Tailscale, so `/internal/v1/relay/uploads…` is
+      # served here — which makes this the third service that touches the spool. Same module, same
+      # deletion, same caps as `web`: the bytes land in the spool and the worker takes them from
+      # there. Off unless CLOUD_FINGERPRINTING_ENABLED, like everywhere else.
+      CLOUD_FINGERPRINTING_ENABLED: ${CLOUD_FINGERPRINTING_ENABLED:-false}
+      CLOUD_UPLOAD_SPOOL_DIR: /var/lib/marceline/upload-spool
+      CLOUD_UPLOAD_CHUNK_BYTES: ${CLOUD_UPLOAD_CHUNK_BYTES:-8388608}
+      CLOUD_UPLOAD_MAX_BYTES: ${CLOUD_UPLOAD_MAX_BYTES:-10737418240}
+      CLOUD_UPLOAD_SPOOL_MAX_BYTES: ${CLOUD_UPLOAD_SPOOL_MAX_BYTES:-42949672960}
+      CLOUD_UPLOAD_DAILY_BYTES_PER_ORG: ${CLOUD_UPLOAD_DAILY_BYTES_PER_ORG:-64424509440}
+      CLOUD_UPLOAD_TTL_HOURS: ${CLOUD_UPLOAD_TTL_HOURS:-6}
+      # ADR 0056 (issue #133): this service is where `pull_customer_writes` runs, so it is where a
+      # data request the public host accepted is actually written — and `customer_writes.py` re-reads
+      # the switch before applying one. Missing here, every request a creator makes on production
+      # would be pulled and then refused `data_requests_unavailable`, which nobody would see.
+      CUSTOMER_DATA_REQUESTS_ENABLED: ${CUSTOMER_DATA_REQUESTS_ENABLED:-false}
+      CACHE_SIGNING_KEY_PATH: /run/marceline/signing.key
+      CACHE_PURGE_BASE_URL: ${CACHE_PURGE_BASE_URL:-}
+      # Production's PUBLIC outbox key: verifies the batches of customer writes this service pulls
+      # (`manage.py pull_customer_writes` from cron, ADR 0028 write-path amendment).
+      OUTBOX_VERIFY_KEY_PATH: /run/marceline/prod-outbox.pub
+      # ADR 0054, issue #149: the two mails a customer can receive — a password reset and an
+      # address verification. **Only development sends them**, and only these two processes can:
+      # `web` answers a request made on its own (Tailscale) surface and completes an invite, and
+      # `export` applies the outbox items the public host accepted (`pull_customer_writes`). Off by
+      # default, and with no transport configured nothing is issued either (ADR 0054 §1) — so the
+      # mail settings of `x-mail-env` have to reach the same two processes.
+      ACCOUNT_EMAIL_FLOWS_ENABLED: ${ACCOUNT_EMAIL_FLOWS_ENABLED:-false}
+      ACCOUNT_MAIL_FROM: ${ACCOUNT_MAIL_FROM:-noreply@marceline.studio}
+      ACCOUNT_MAIL_REPLY_TO: ${ACCOUNT_MAIL_REPLY_TO:-contact@marceline.studio}
+      ACCOUNT_PASSWORD_RESET_TTL_MINUTES: ${ACCOUNT_PASSWORD_RESET_TTL_MINUTES:-60}
+      ACCOUNT_VERIFICATION_TTL_HOURS: ${ACCOUNT_VERIFICATION_TTL_HOURS:-48}
+      # The link every mail carries points at the **public** customer app, so this container
+      # needs the same origin `web` uses for an invite link.
+      ONBOARDING_INVITE_BASE_URL: ${ONBOARDING_INVITE_BASE_URL:-}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-marceline}
+      POSTGRES_USER: ${POSTGRES_USER:-marceline}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-marceline}
+    ports:
+      # 127.0.0.1 until EXPORT_BIND names the Tailscale address; never 0.0.0.0.
+      - "${EXPORT_BIND:-127.0.0.1}:8010:8010"
+    volumes:
+      - ../backend:/app
+      # The spool, because this listener receives the relayed chunks (ADR 0044 §9). It never reads
+      # a file back: `spool.append` writes at an offset, the worker hashes and deletes.
+      - upload-spool:/var/lib/marceline/upload-spool
+      # Unset, the key is /dev/null and every export answers 503 (logged) instead of starting.
+      - ${CACHE_SIGNING_KEY_FILE:-/dev/null}:/run/marceline/signing.key:ro
+      # Unset, nothing verifies and `pull_customer_writes` exits with outbox_verify_key_unreadable.
+      - ${OUTBOX_VERIFY_KEY_FILE:-/dev/null}:/run/marceline/prod-outbox.pub:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Cloud fingerprinting (issue #59, ADR 0044): hash one uploaded original at a time and delete the
+  # bytes. Profile `uploads`: never started by `make up`, `make workers` or `make runtime`. It is
+  # the only service on the internal `uploads` network, so the process that decodes a customer's
+  # file has **no route to the internet**; it drops every capability, runs on a read-only root with
+  # the source mounted read-only, and its one writable place is the spool. The decode itself runs
+  # in a child process with a scrubbed environment (no database credentials) and hard rlimits —
+  # see matching/cloud_hash.py. Concurrency is one on purpose: 13 CPU-minutes per video-hour
+  # measured on this box, whose other cores crawl.
+  fingerprint-worker:
+    build: ../backend
+    command: python manage.py fingerprint_worker
+    profiles: ["uploads"]
+    restart: unless-stopped
+    environment:
+      DJANGO_ENV: dev
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-marceline}
+      POSTGRES_USER: ${POSTGRES_USER:-marceline}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-marceline}
+      CLOUD_FINGERPRINTING_ENABLED: ${CLOUD_FINGERPRINTING_ENABLED:-false}
+      CLOUD_UPLOAD_SPOOL_DIR: /var/lib/marceline/upload-spool
+      CLOUD_UPLOAD_MAX_BYTES: ${CLOUD_UPLOAD_MAX_BYTES:-10737418240}
+      CLOUD_UPLOAD_SPOOL_MAX_BYTES: ${CLOUD_UPLOAD_SPOOL_MAX_BYTES:-42949672960}
+      CLOUD_UPLOAD_TTL_HOURS: ${CLOUD_UPLOAD_TTL_HOURS:-6}
+      # The decoder must not leave .pyc files on a read-only root, and RLIMIT_FSIZE=0 in the child
+      # would refuse the write anyway.
+      PYTHONDONTWRITEBYTECODE: "1"
+    networks: [uploads]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    # Above the child decoder's own RLIMIT_AS (1.5 GiB), so a runaway file fails that one job
+    # instead of having the kernel kill the worker.
+    mem_limit: 2g
+    cpus: "1.0"
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - ../backend:/app:ro
+      - upload-spool:/var/lib/marceline/upload-spool
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  # ADR 0034: encrypted rights proof documents (web only). Not in the Postgres dump: back up
+  # separately, and keep RIGHTS_VAULT_KEYS apart from it.
+  rights-vault:
+  # ADR 0044: customer media waiting to be hashed, for minutes. **Never back this up**, never mount
+  # it anywhere else, and never put anything else in it. infra/backup/* pushes the Postgres dump
+  # and nothing else, which is what keeps this true (marceline/tests/test_no_retention.py).
+  upload-spool:
+  # ADR 0037, issue #101: the pinned frame-embedding model file (45 MB), fetched once per machine
+  # by `manage.py fetch_embedding_model`. Before this volume existed a fetched file lived in
+  # whichever container's writable layer ran the command and was lost on the next
+  # `--force-recreate` (`make workers`/`make runtime`, routine after every migration) — which would
+  # have crash-looped the media lane the first time `MATCHING_EMBEDDINGS_ENABLED` went on, since
+  # `crawl_runtime.py`/`media_worker` refuse to start without the file. Shared read-write by every
+  # `media-*` worker and `crawler-media`: fetch it once anywhere that mounts it, every other reader
+  # sees the same file. Not in the Postgres dump; not secret, so no separate backup is needed —
+  # `fetch_embedding_model` can always rebuild it from the pinned URL and digest.
+  embedding-models:
+
+networks:
+  # Everything that is not the upload decoder.
+  default: {}
+  # ADR 0044: `fingerprint-worker` and Postgres, and no route out of it.
+  uploads:
+    internal: true

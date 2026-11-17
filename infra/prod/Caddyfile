@@ -1,0 +1,368 @@
+# Public edge of the production customer cache (ADR 0028, docs/runbooks/production.md).
+#
+# What answers on the internet, and nothing else:
+#   /api/v1/app/*, /api/v1/health   -> gunicorn (the customer API); request bodies up to 1 MB,
+#                                      except POST /api/v1/app/fingerprints (16 MiB) and
+#                                      POST /api/v1/app/uploads/*/chunks/* (9 MiB, ADR 0044 §9)
+#   /app, /app/*                    -> the customer app, chosen by CUSTOMER_APP (ADR 0036):
+#                                      `next` = the Next.js server (it serves its own
+#                                      /app/_next/static/*), `spa` = the Vite build in this image
+#                                      (index.html plus /assets/*). The cut-over and the rollback
+#                                      are that one value plus a restart.
+#   /                               -> redirect to /app
+#   everything else                 -> 404, including /admin/, /api/v1/review/*, /api/v1/auth/*,
+#                                      /api/v1/media/*, /api/v1/originals, /api/v1/docs and the
+#                                      staff SPA routes (/references, /safety, …)
+#
+# A third site, on its own hostname, serves the public marketing site (website/) from /srv/site as
+# static files, with no upstream. PUBLIC_SITE=on turns it on; see the (website_on) snippet below.
+# One Caddy serves both names (operator, 2026-09-19): there is one public IPv4 and one pair of
+# ports 80/443 on this host, and marceline.studio is live on them today from a second, standalone
+# process (infra/prod/site/) that is retired at the cut-over — docs/runbooks/production.md section
+# 14 is the procedure, and until it has run PUBLIC_SITE stays `off`.
+#
+# Django refuses the same paths on its own (marceline/public_surface.py), so a mistake here is not
+# enough to expose the staff surface. `infra/prod/check-surface.sh` exercises this file.
+#
+# APP_DOMAIN is the customer app's hostname: dash.marceline.studio in production (operator,
+# 2026-09-17), localhost for a rehearsal.
+#
+# A second site on :8081 carries development's cache purges and its pulls of the customer write
+# outbox (ADR 0028 and its write-path amendment). compose publishes that port on production's
+# Tailscale address only (TAILSCALE_BIND), so it is unreachable from the internet whatever this file
+# says; it forwards POST /internal/v1/cache/purge, /internal/v1/outbox/pull and
+# /internal/v1/outbox/ack to the `internal` Django process (DJANGO_PUBLIC_SURFACE=internal) and
+# answers 404 to everything else.
+
+{
+	# No admin endpoint: a configuration change is a container restart, and nothing that reaches a
+	# local port can rewrite routing.
+	admin off
+	# Rehearsal on the development VPS uses `localhost` with Caddy's internal CA; never touch the
+	# container's trust store for it.
+	skip_install_trust
+	# The ACME account's contact address (the project mailbox, never a personal address). Let's
+	# Encrypt mails it when renewals keep failing, which is the one warning nothing else gives.
+	# Required, and deliberately so: an empty value does not adapt at all ("wrong argument count
+	# ... after 'email'", measured 2026-09-19), which would be a Caddy that does not start. So
+	# compose demands the variable (`:?`) and `make prod-config` refuses an empty one, rather than
+	# letting a dead edge be how we find out.
+	email {$CADDY_ACME_EMAIL}
+}
+
+# There is deliberately **no `log` directive** anywhere in this file, and that is now a promise and
+# not a preference: Caddy writes no access log unless one is configured, and the privacy notice
+# published at marceline.studio (website/public/datenschutz.html) states that the server serving it
+# keeps none. Since one Caddy serves both names (operator, 2026-09-19) this file is that server.
+# A `log` in the global options block, or one added per site, would cover the brochure too, so:
+# never add one here. `backend/marceline/tests/test_site_edge_config.py` fails on a bare `log`
+# line, and `infra/prod/check-surface.sh` proves it against the running container.
+#
+# What *is* recorded about a request to APP_DOMAIN: nothing at this edge either. gunicorn runs with
+# access logs off and `--error-logfile -` (infra/prod/web.Dockerfile), so `web`'s container log
+# holds errors and tracebacks only, the Next.js server logs its own failures, and error events go
+# to Sentry (EU) when SENTRY_DSN is set. An access log for the app would have to live **inside** the
+# {$APP_DOMAIN} block, and adding one means narrowing that test on purpose — never widening the
+# file's scope by putting it in the global options.
+
+# Everything but the Content-Security-Policy, which differs per upstream: the SPA gets the static
+# policy below, and the Next.js app sets its own per request (a nonce for the inline bootstrap its
+# streaming needs, `frontend/customer/proxy.ts`). `defer` replaces the upstream's header, so a
+# policy set here would overwrite the nonce and break the page.
+(security_headers) {
+	header {
+		# Applied after the upstream answered, so these values replace Django's rather than
+		# adding a second copy of each header.
+		defer
+		Strict-Transport-Security "{$CADDY_HSTS:max-age=31536000; includeSubDomains}"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Cross-Origin-Opener-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+		-Via
+	}
+}
+
+# The static policy, for every answer except the Next.js app's: the same as the SPA build's
+# <meta> tag (frontend/vite.config.ts), plus what only a header can say — nobody may frame the app.
+# `wasm-unsafe-eval` is there because "add an original" hashes frames with Meta's PDQ compiled to
+# WebAssembly (ADR 0017), which no browser instantiates under a bare `script-src 'self'`; the
+# `blob:` sources are the local file the decoder reads, never anything remote.
+(static_csp) {
+	header {
+		defer
+		Content-Security-Policy "default-src 'self'; img-src 'self'; connect-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; media-src blob:; style-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+	}
+}
+
+# TLS issuer, chosen by CADDY_TLS in infra/prod/.env: `acme` (default, Let's Encrypt; ports 80/443
+# must be reachable from the internet on the public address) or `internal` (Caddy's own CA) while
+# the app is private and dash.marceline.studio points at production's Tailscale address (operator,
+# 2026-09-17). Switch to `acme` at launch.
+#
+# It is **one variable for every site block in this file**, including the brochure's. So
+# `PUBLIC_SITE=on` with `CADDY_TLS=internal` would serve a live, promoted public name with a
+# certificate no browser trusts: `infra/prod/check_config.py` refuses that combination, and refuses
+# a third value for CADDY_TLS as well — `import tls_<typo>` is not a broken site block but a file
+# that does not adapt, and a Caddy that does not start.
+(tls_acme) {
+}
+
+(tls_internal) {
+	tls internal
+}
+
+# The customer app, phase 2 (ADR 0036): the Next.js server renders /app and serves its own client
+# chunks under /app/_next/static/*, so the public allowlist is still exactly `/app` and `/app/*`.
+# The one large body in the app is the fingerprint upload, which now arrives on the app's own path.
+(customer_next) {
+	@customer_fingerprints {
+		method POST
+		path /app/api/fingerprints
+	}
+	handle @customer_fingerprints {
+		request_body {
+			max_size 16MiB
+		}
+		reverse_proxy customer:3000
+	}
+
+	# Cloud fingerprinting's one large body (ADR 0044 §9, amendment 2026-09-19): a chunk of a video
+	# the customer chose to have fingerprinted for them. Exactly this method and this path shape —
+	# not the declare, complete, list or status calls next to it, which stay at 1 MB.
+	#
+	# Nothing here spools. `request_body` only *limits* a body (Caddy answers 413 above the size);
+	# streaming is the default and buffering would need `request_buffers`, which this file never
+	# sets. Django then relays each read straight to development (CLOUD_UPLOAD_RELAY_MODE), so the
+	# bytes cross this machine and are never written on it.
+	@customer_upload_chunks {
+		method POST
+		path /app/api/uploads/*/chunks/*
+	}
+	handle @customer_upload_chunks {
+		request_body {
+			max_size 9MiB
+		}
+		reverse_proxy customer:3000
+	}
+
+	@customer_static path /app/_next/static/*
+	handle @customer_static {
+		header Cache-Control "public, max-age=31536000, immutable"
+		reverse_proxy customer:3000
+	}
+
+	@customer_app path /app /app/*
+	handle @customer_app {
+		request_body {
+			max_size 1MB
+		}
+		reverse_proxy customer:3000
+	}
+}
+
+# The customer app, phase 1 (ADR 0026, ADR 0028 d.1): the Vite build baked into this image. Kept
+# as the rollback while phase 2 settles. Only the customer part of the SPA is routable — the staff
+# screens ship in the same bundle, but no staff URL serves the page and every staff API answers 404.
+(customer_spa) {
+	handle /assets/* {
+		root * /srv/spa
+		import static_csp
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	@customer_app path /app /app/*
+	handle @customer_app {
+		root * /srv/spa
+		import static_csp
+		header Cache-Control "no-cache"
+		rewrite * /index.html
+		file_server
+	}
+}
+
+# The public marketing site (website/), served by this same Caddy from a directory of static files
+# (operator, 2026-09-18). There is no second machine and no second process for six pages of prose:
+# `file_server` on a directory is the whole runtime, and website/check.py is the whole build.
+#
+# PUBLIC_SITE selects it, the way CUSTOMER_APP selects the app: `off` (the default) adds no site
+# block at all, so Caddy asks for no certificate for a name whose DNS may not point here yet; `on`
+# publishes it. `import website_{$PUBLIC_SITE}` resolves while the config is adapted, so a third
+# value is not a dark brochure — it is a Caddy that does not start, which
+# infra/prod/check-surface.sh asserts rather than assumes.
+#
+# It shares nothing with the customer edge but the process: its own hostname, its own matcher
+# table, its own headers, and no upstream at all. In particular it does NOT import
+# security_headers, which sends `X-Robots-Tag: noindex, nofollow` — right for the app, fatal for a
+# brochure whose purpose is to be found. Nothing here can reach Django, the database or the
+# customer app, because there is no `reverse_proxy` in it.
+(website_off) {
+}
+
+(website_on) {
+	{$SITE_DOMAIN} {
+		import tls_{$CADDY_TLS:acme}
+		root * /srv/site
+
+		# Extensionless URLs: /kontakt is served from kontakt.html, /en/ from en/index.html.
+		# website/check.py resolves internal links by these same three rules in this same order,
+		# so a link that passes the check is a link this server can serve.
+		try_files {path} {path}/index.html {path}.html
+
+		file_server
+
+		encode zstd gzip
+
+		header {
+			# The same set as the customer edge, minus what a brochure has no use for — and
+			# without X-Robots-Tag, which is the point of not importing security_headers.
+			Strict-Transport-Security "{$CADDY_HSTS:max-age=31536000; includeSubDomains}"
+			X-Content-Type-Options "nosniff"
+			X-Frame-Options "DENY"
+			Referrer-Policy "no-referrer"
+			Cross-Origin-Opener-Policy "same-origin"
+			Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+			-Server
+
+			# The policy is this tight because the site really is this small: no script, no form,
+			# no frame, no connection of any kind, and every style and font on our own origin.
+			# `img-src 'self'` is there for the SVG favicon and nothing else. A change that needs
+			# this loosened is a change to argue about — `make website-check` fails first.
+			Content-Security-Policy "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		}
+
+		# The six woff2 files carry an 8-hex content hash in their names (issue #84), so a year of
+		# immutable caching is an honest promise: different bytes get a different URL.
+		@fonts path /assets/fonts/*.woff2
+		header @fonts Cache-Control "public, max-age=31536000, immutable"
+
+		# The stylesheet and the favicon are not content-hashed: an hour and a revalidation.
+		@static path /assets/site.css /assets/favicon.svg
+		header @static Cache-Control "public, max-age=3600, must-revalidate"
+
+		@pages path / /*.html /en/ /en/*.html
+		header @pages Cache-Control "public, max-age=300, must-revalidate"
+
+		handle_errors {
+			# No custom error page: a 404 here is a typo in a link, and website/check.py is
+			# supposed to have caught it before the files were ever copied to this host.
+			respond "{err.status_code} {err.status_text}"
+		}
+	}
+
+	# The apex is the canonical name. www redirects to it rather than serving a second copy, so
+	# there is one URL per page and the canonical tags stay true. It is its own variable rather
+	# than "www." glued in front of SITE_DOMAIN, because a Caddy placeholder cannot be nested and
+	# the surface check needs both names in `http://…` form to test over plain HTTP.
+	{$SITE_WWW_DOMAIN:www.marceline.studio} {
+		import tls_{$CADDY_TLS:acme}
+		redir {$SITE_CANONICAL_ORIGIN:https://marceline.studio}{uri} permanent
+	}
+}
+
+import website_{$PUBLIC_SITE:off}
+
+{$APP_DOMAIN} {
+	import tls_{$CADDY_TLS:acme}
+	import security_headers
+	encode zstd gzip
+
+	# The one exception to the 1 MB body limit (ADR 0028 amendment "The production write path"):
+	# adding an original posts a hashes-only fingerprint document of up to 16 MiB (a three-hour
+	# video is about 12.5 MB of JSON; Django's own cap is fingerprints.MAX_BODY_BYTES). Exactly this
+	# method and path — not /api/v1/app/fingerprints/client-events, not a prefix. It must stay above
+	# @customer_api: handle blocks with named matchers run in file order.
+	@fingerprint_upload {
+		method POST
+		path /api/v1/app/fingerprints
+	}
+	handle @fingerprint_upload {
+		import static_csp
+		request_body {
+			max_size 16MiB
+		}
+		reverse_proxy web:8000
+	}
+
+	# The same body, on Django's own path (ADR 0044 §9). The app posts a chunk to /app/api/… above;
+	# this is the direct route, raised separately so exactly the two chunk paths carry a chunk and
+	# everything else under /api/v1/app/* stays at 1 MB. 9 MiB = the 8 MiB chunk plus the slack
+	# `marceline/app/uploads.py` allows (CHUNK_BODY_SLACK), which is also Django's own cap there.
+	@upload_chunk {
+		method POST
+		path /api/v1/app/uploads/*/chunks/*
+	}
+	handle @upload_chunk {
+		import static_csp
+		request_body {
+			max_size 9MiB
+		}
+		reverse_proxy web:8000
+	}
+
+	# The customer API. The same allowlist as marceline/public_surface.py — change both together.
+	@customer_api path /api/v1/app/* /api/v1/health
+	handle @customer_api {
+		import static_csp
+		request_body {
+			max_size 1MB
+		}
+		# Caddy replaces any client-sent X-Forwarded-For / X-Forwarded-Proto with what it saw
+		# itself (no trusted proxies are configured), which is what LOGIN_TRUSTED_PROXIES=1 and
+		# SECURE_PROXY_SSL_HEADER rely on.
+		reverse_proxy web:8000
+	}
+
+	import customer_{$CUSTOMER_APP:spa}
+
+	handle / {
+		import static_csp
+		redir * /app 302
+	}
+
+	handle {
+		import static_csp
+		respond 404
+	}
+}
+
+# Tailscale only (see the header). Plain HTTP: the tailnet is WireGuard-encrypted and every purge is
+# signed by development, with a timestamp and a nonce.
+http://:8081 {
+	header {
+		-Server
+	}
+
+	@purge {
+		method POST
+		path /internal/v1/cache/purge
+	}
+	handle @purge {
+		request_body {
+			max_size 256KB
+		}
+		reverse_proxy internal:8000
+	}
+
+	# Development pulls customer writes and acknowledges them (ADR 0028 amendment "The production
+	# write path"). Both requests are small signed envelopes; the pull's answer (a signed batch of
+	# up to about 22 MB) is a response and not limited here.
+	@outbox {
+		method POST
+		path /internal/v1/outbox/pull /internal/v1/outbox/ack
+	}
+	handle @outbox {
+		request_body {
+			max_size 256KB
+		}
+		reverse_proxy internal:8000
+	}
+
+	handle {
+		respond 404
+	}
+}

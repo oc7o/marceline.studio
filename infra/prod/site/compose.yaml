@@ -1,0 +1,84 @@
+# The public marketing site (website/) on its own server — its own compose project, next to but
+# entirely separate from the production customer stack (operator, 2026-09-18).
+#
+# `docker compose -p` is not used: the project name is pinned here, so every command in the
+# runbook acts on this stack and can never recreate a container of `marceline-prod`. Rollback is
+# `docker compose -f infra/prod/site/compose.yaml down` — the customer stack does not notice.
+#
+# One service, one process, no upstream, no database, no application code: Caddy serving a
+# directory of static files (infra/prod/site/Caddyfile). It has no route to `web`, `internal` or
+# `db`: they are on the other project's networks, this project has only its own default network,
+# and there is no `reverse_proxy` in the Caddyfile to use one with.
+#
+# Configuration comes from infra/prod/site/.env on the host (template: site.env.example).
+# Required values have no default — compose refuses to start without them.
+
+name: marceline-site
+
+services:
+  caddy:
+    # The image production already holds, by tag: nothing is pulled and nothing is built on the
+    # VPS (it has no checkout and no build memory to spare). SITE_IMAGE_TAG has no default on
+    # purpose — a default would invent a tag that may not exist on the host, and `up` would then
+    # try to pull `marceline-prod-caddy:latest` from a registry that does not have it. Pick the
+    # tag the customer stack is running (`docker compose -f ../compose.yaml ps` shows it, and it
+    # is MARCELINE_RELEASE in the other project's .env); infra/prod/site/README.md says so too.
+    #
+    # The image carries the SPA build at /srv/spa. Nothing here routes to it — this Caddyfile's
+    # only root is /srv/site — and it is inert: 59 MB of files no site block can reach.
+    image: marceline-prod-caddy:${SITE_IMAGE_TAG:?set SITE_IMAGE_TAG in infra/prod/site/.env}
+    restart: unless-stopped
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?set SITE_DOMAIN in infra/prod/site/.env}
+      SITE_WWW_DOMAIN: ${SITE_WWW_DOMAIN:-www.marceline.studio}
+      SITE_CANONICAL_ORIGIN: ${SITE_CANONICAL_ORIGIN:-https://marceline.studio}
+      # The ACME account contact (the project mailbox, never a personal address). Let's Encrypt
+      # mails it when a renewal keeps failing, which is the one warning nothing else would give.
+      SITE_ACME_EMAIL: ${SITE_ACME_EMAIL:?set SITE_ACME_EMAIL in infra/prod/site/.env}
+      CADDY_HSTS: ${CADDY_HSTS:-max-age=31536000; includeSubDomains}
+    ports:
+      # SITE_BIND has no default on purpose. It is the host's **public** address: never 0.0.0.0
+      # (docker-published ports bypass the host firewall, so a wildcard publishes on the tailnet
+      # too) and never the Tailscale address (100.64.0.0/10 — that is what makes the customer
+      # edge private, and a brochure bound there is reachable by nobody). check_config.py refuses
+      # both. A host with a public IPv6 adds compose.ipv6.yaml as a second -f file.
+      - "${SITE_BIND:?set SITE_BIND in infra/prod/site/.env}:80:80"
+      - "${SITE_BIND}:443:443"
+      - "${SITE_BIND}:443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The site itself, read-only: a copy of website/public that rsync put on the host. Nothing
+      # in this container may ever write to it. The default is the checkout's own website/public,
+      # which is what a rehearsal on a development machine serves; on the VPS SITE_ROOT points at
+      # the copy (docs/runbooks/production.md §12).
+      - ${SITE_ROOT:-../../../website/public}:/srv/site:ro
+      # Certificates and the ACME account. Named volumes, because a recreate that loses them
+      # orders a new certificate every time and runs into Let's Encrypt's duplicate-certificate
+      # limit (5 per week per name).
+      - site_data:/data
+      - site_config:/config
+    # Nothing but /data, /config and /tmp is writable: a static file server has no reason to
+    # change its own filesystem.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      # Ports 80 and 443 inside the container, and nothing else. Caddy runs as root in the
+      # upstream image; with every other capability dropped that buys an attacker nothing.
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    # Measured need is a few MB: 12 pages of HTML, a stylesheet and six fonts, served from disk.
+    mem_limit: 128m
+    # No depends_on: there is nothing to wait for, and this stack must come up on a reboot even
+    # if the customer stack does not.
+
+volumes:
+  site_data:
+  site_config:
+
+# No `networks:` key at all: the project's own default bridge, which reaches the internet (ACME)
+# and nothing of the customer stack. Joining `marceline-prod`'s `edge` network would give this
+# container a route to gunicorn and Postgres; check_config.py refuses any external network.

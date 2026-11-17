@@ -1,0 +1,13 @@
+# Paths are relative to the build context (backend/). The production image carries runtime code
+# only: no virtualenv, caches, tests or recorded crawler fixtures (HTML of piracy sites).
+.venv
+**/__pycache__
+.mypy_cache
+.ruff_cache
+.pytest_cache
+staticfiles
+.cache
+**/tests
+conftest.py
+openapi.json
+CLAUDE.md

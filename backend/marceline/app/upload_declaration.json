@@ -1,0 +1,15 @@
+{
+  "current": "upload-2026-09-19",
+  "versions": {
+    "upload-2026-09-19": {
+      "de": {
+        "sole_performer": "Ich erkläre, dass ich volljährig und die einzige Person bin, die in dieser Datei zu sehen oder zu hören ist. Es ist keine weitere Person abgebildet. Ich habe die Aufnahme selbst gemacht oder machen lassen und darf über sie verfügen.",
+        "article9_consent": "Ich bin damit einverstanden, dass Marceline diese Datei verarbeitet, um daraus Fingerabdrücke zu berechnen, und willige ausdrücklich darin ein, dass dabei besondere Kategorien personenbezogener Daten verarbeitet werden, die die Aufnahme über mich enthalten kann (Art. 9 Abs. 2 Buchst. a DSGVO). Die Datei wird nach der Berechnung gelöscht; gespeichert werden nur die Fingerabdrücke und die Angaben, die ich selbst eingetragen habe. Ich kann diese Einwilligung jederzeit widerrufen; die Verarbeitung bis zum Widerruf bleibt davon unberührt."
+      },
+      "en": {
+        "sole_performer": "I declare that I am of age and the only person visible or audible in this file. No other person appears in it. I made the recording myself or had it made, and I am entitled to dispose of it.",
+        "article9_consent": "I agree that Marceline may process this file in order to compute fingerprints from it, and I explicitly consent to the processing, for that purpose, of any special categories of personal data the recording may contain about me (Art. 9(2)(a) GDPR). The file is deleted once the fingerprints are computed; only the fingerprints and the details I entered myself are kept. I may withdraw this consent at any time, without affecting the processing carried out until then."
+      }
+    }
+  }
+}

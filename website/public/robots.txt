@@ -1,0 +1,14 @@
+# marceline.studio — the public brochure. Nothing here is generated, nothing here is private.
+#
+# The staff surfaces (the admin, the review API, the moderation UI) are not on this host at all:
+# they live on the development VPS and are reachable over Tailscale only (ADR 0028). The customer
+# app is on its own hostname and sends X-Robots-Tag: noindex from Caddy.
+#
+# Every page of the site is indexable and listed in the sitemap, the Impressum and the
+# Datenschutzerklärung included: an Impressum a crawler cannot reach is worth less than one it can,
+# and there is nothing here that is not meant to be read.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://marceline.studio/sitemap.xml

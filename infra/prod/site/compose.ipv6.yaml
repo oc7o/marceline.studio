@@ -1,0 +1,22 @@
+# IPv6 for the standalone site edge, as a second -f file (docker compose appends `ports`).
+#
+# It is separate because compose cannot leave a published port out conditionally: a host with no
+# public IPv6 would have to invent an address for it. Use it only where `ip -6 addr show scope
+# global` shows one on the public interface, and only with an AAAA record for the name — Caddy
+# binds happily either way, but a AAAA pointing nowhere makes the site unreachable for v6-only
+# clients and can fail an ACME HTTP-01 challenge that Let's Encrypt chooses to send over IPv6.
+#
+#   docker compose -f compose.yaml -f compose.ipv6.yaml --env-file .env up -d
+#
+# The production VPS has a global IPv6 address, but marceline.studio has no AAAA
+# record yet. The live deploy is IPv4-only and does not use this
+# file. Add it once an AAAA record for both names exists (docs/runbooks/production.md §12,
+# infra/prod/site/README.md) — and from then on pass -f compose.ipv6.yaml on **every** compose
+# command against this project, or the container comes back without the IPv6 ports.
+
+services:
+  caddy:
+    ports:
+      - "[${SITE_BIND6:?set SITE_BIND6 in infra/prod/site/.env}]:80:80"
+      - "[${SITE_BIND6}]:443:443"
+      - "[${SITE_BIND6}]:443:443/udp"

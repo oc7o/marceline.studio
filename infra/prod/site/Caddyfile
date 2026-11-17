@@ -1,0 +1,93 @@
+# The public marketing site (website/), on its own server — marceline.studio.
+#
+# This is a **standalone edge**: its own compose project (infra/prod/site/compose.yaml), its own
+# Caddy container, its own certificates, its own network. It shares nothing with the production
+# customer stack (infra/prod/compose.yaml) but the machine, and it has no route to `web`,
+# `internal` or `db` — there is no `reverse_proxy` in this file at all, so there is nothing it
+# could forward to even if it had one.
+#
+# Why a second process rather than the `PUBLIC_SITE=on` block in infra/prod/Caddyfile (operator,
+# 2026-09-18): that Caddy binds 80/443 to the host's **Tailscale** address (CADDY_BIND) and issues
+# **internal** certificates (CADDY_TLS=internal, one file-wide variable used by every site block in
+# it) because `dash.marceline.studio` is deliberately still private, on a 100.x A record that
+# Let's Encrypt can never validate. Serving a public brochure from it would mean publishing the
+# customer edge and switching its issuer at the same time — a launch, not a website change. So the
+# brochure gets 40 MB of its own and the two are merged back into one Caddy when the customer app
+# launches publicly — the cut-over is decided and planned (operator, 2026-09-19):
+# docs/runbooks/production.md §14.
+#
+# `infra/prod/Caddyfile`'s (website_on) snippet stays in place, off, for that merge-back. The two
+# copies of the site block are kept identical by
+# backend/marceline/tests/test_site_edge_config.py, which compares them directive by directive and
+# fails on any substantive difference.
+
+{
+	# No admin endpoint: a configuration change is a container restart, and nothing that reaches a
+	# local port can rewrite routing.
+	admin off
+	# The ACME account's contact address (the project mailbox, never a personal address). Let's
+	# Encrypt uses it for expiry warnings when renewal has been failing.
+	email {$SITE_ACME_EMAIL}
+}
+
+# There is deliberately **no `log` directive**: Caddy writes no access log unless one is
+# configured, and the published privacy notice (website/public/datenschutz.html) states that this
+# server keeps none. Errors still go to the container's stderr, which is what `docker compose logs`
+# shows. Adding a log here contradicts a legal page — change the page first.
+
+{$SITE_DOMAIN} {
+	root * /srv/site
+
+	# Extensionless URLs: /kontakt is served from kontakt.html, /en/ from en/index.html.
+	# website/check.py resolves internal links by these same three rules in this same order,
+	# so a link that passes the check is a link this server can serve.
+	try_files {path} {path}/index.html {path}.html
+
+	file_server
+
+	encode zstd gzip
+
+	header {
+		# The same set as the customer edge, minus what a brochure has no use for — and
+		# without X-Robots-Tag, which is the point of not importing security_headers.
+		Strict-Transport-Security "{$CADDY_HSTS:max-age=31536000; includeSubDomains}"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Cross-Origin-Opener-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		-Server
+
+		# The policy is this tight because the site really is this small: no script, no form,
+		# no frame, no connection of any kind, and every style and font on our own origin.
+		# `img-src 'self'` is there for the SVG favicon and nothing else. A change that needs
+		# this loosened is a change to argue about — `make website-check` fails first.
+		Content-Security-Policy "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+	}
+
+	# The six woff2 files carry an 8-hex content hash in their names (issue #84), so a year of
+	# immutable caching is an honest promise: different bytes get a different URL.
+	@fonts path /assets/fonts/*.woff2
+	header @fonts Cache-Control "public, max-age=31536000, immutable"
+
+	# The stylesheet and the favicon are not content-hashed: an hour and a revalidation.
+	@static path /assets/site.css /assets/favicon.svg
+	header @static Cache-Control "public, max-age=3600, must-revalidate"
+
+	@pages path / /*.html /en/ /en/*.html
+	header @pages Cache-Control "public, max-age=300, must-revalidate"
+
+	handle_errors {
+		# No custom error page: a 404 here is a typo in a link, and website/check.py is
+		# supposed to have caught it before the files were ever copied to this host.
+		respond "{err.status_code} {err.status_text}"
+	}
+}
+
+# The apex is the canonical name. www redirects to it rather than serving a second copy, so
+# there is one URL per page and the canonical tags stay true. It is its own variable rather
+# than "www." glued in front of SITE_DOMAIN, because a Caddy placeholder cannot be nested and
+# the surface check needs both names in `http://…` form to test over plain HTTP.
+{$SITE_WWW_DOMAIN:www.marceline.studio} {
+	redir {$SITE_CANONICAL_ORIGIN:https://marceline.studio}{uri} permanent
+}

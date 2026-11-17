@@ -1,0 +1,223 @@
+{
+  "handle": "5.9.0.0 - 5.9.0.31",
+  "startAddress": "5.9.0.0",
+  "endAddress": "5.9.0.31",
+  "ipVersion": "v4",
+  "name": "HETZNER-fsn1-dc7",
+  "type": "ASSIGNED PA",
+  "country": "DE",
+  "parentHandle": "5.9.0.0 - 5.9.255.255",
+  "cidr0_cidrs": [
+    {
+      "v4prefix": "5.9.0.0",
+      "length": 27
+    }
+  ],
+  "entities": [
+    {
+      "handle": "HOAC1-RIPE",
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            "Hetzner Online GmbH - Contact Role"
+          ],
+          [
+            "kind",
+            {},
+            "text",
+            "group"
+          ],
+          [
+            "email",
+            {
+              "type": "abuse"
+            },
+            "text",
+            "abuse@hetzner.com"
+          ]
+        ]
+      ],
+      "roles": [
+        "administrative",
+        "technical"
+      ],
+      "links": [
+        {
+          "value": "https://rdap.db.ripe.net/ip/5.9.0.1",
+          "rel": "self",
+          "href": "https://rdap.db.ripe.net/entity/HOAC1-RIPE"
+        },
+        {
+          "value": "http://www.ripe.net/data-tools/support/documentation/terms",
+          "rel": "copyright",
+          "href": "http://www.ripe.net/data-tools/support/documentation/terms"
+        }
+      ],
+      "objectClassName": "entity"
+    },
+    {
+      "handle": "HOAC1-RIPE",
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            "Hetzner Online GmbH - Contact Role"
+          ],
+          [
+            "kind",
+            {},
+            "text",
+            "group"
+          ],
+          [
+            "email",
+            {
+              "type": "abuse"
+            },
+            "text",
+            "abuse@hetzner.com"
+          ]
+        ]
+      ],
+      "roles": [
+        "abuse"
+      ],
+      "entities": [
+        {
+          "handle": "ORG-HOA1-RIPE",
+          "vcardArray": [
+            "vcard",
+            [
+              [
+                "version",
+                {},
+                "text",
+                "4.0"
+              ],
+              [
+                "fn",
+                {},
+                "text",
+                "Hetzner Online GmbH"
+              ],
+              [
+                "kind",
+                {},
+                "text",
+                "org"
+              ]
+            ]
+          ],
+          "roles": [
+            "registrant"
+          ],
+          "links": [
+            {
+              "value": "https://rdap.db.ripe.net/ip/5.9.0.1",
+              "rel": "self",
+              "href": "https://rdap.db.ripe.net/entity/ORG-HOA1-RIPE"
+            },
+            {
+              "value": "http://www.ripe.net/data-tools/support/documentation/terms",
+              "rel": "copyright",
+              "href": "http://www.ripe.net/data-tools/support/documentation/terms"
+            }
+          ],
+          "objectClassName": "entity"
+        }
+      ],
+      "objectClassName": "entity"
+    }
+  ],
+  "links": [
+    {
+      "value": "https://rdap.db.ripe.net/ip/5.9.0.1",
+      "rel": "rdap-up",
+      "href": "https://rdap.db.ripe.net/ips/rirSearch1/rdap-up/5.9.0.0%20-%205.9.0.31",
+      "type": "application/rdap+json"
+    },
+    {
+      "value": "https://rdap.db.ripe.net/ip/5.9.0.1",
+      "rel": "rdap-up rdap-active",
+      "href": "https://rdap.db.ripe.net/ips/rirSearch1/rdap-up/5.9.0.0%20-%205.9.0.31?status=active",
+      "type": "application/rdap+json"
+    },
+    {
+      "value": "https://rdap.db.ripe.net/ip/5.9.0.1",
+      "rel": "rdap-down",
+      "href": "https://rdap.db.ripe.net/ips/rirSearch1/rdap-down/5.9.0.0%20-%205.9.0.31",
+      "type": "application/rdap+json"
+    },
+    {
+      "value": "https://rdap.db.ripe.net/ip/5.9.0.1",
+      "rel": "rdap-top",
+      "href": "https://rdap.db.ripe.net/ips/rirSearch1/rdap-top/5.9.0.0%20-%205.9.0.31",
+      "type": "application/rdap+json"
+    },
+    {
+      "value": "https://rdap.db.ripe.net/ip/5.9.0.1",
+      "rel": "rdap-top rdap-active",
+      "href": "https://rdap.db.ripe.net/ips/rirSearch1/rdap-top/5.9.0.0%20-%205.9.0.31?status=active",
+      "type": "application/rdap+json"
+    },
+    {
+      "value": "https://rdap.db.ripe.net/ip/5.9.0.1",
+      "rel": "rdap-bottom",
+      "href": "https://rdap.db.ripe.net/ips/rirSearch1/rdap-bottom/5.9.0.0%20-%205.9.0.31",
+      "type": "application/rdap+json"
+    },
+    {
+      "value": "https://rdap.db.ripe.net/ip/5.9.0.1",
+      "rel": "self",
+      "href": "https://rdap.db.ripe.net/ip/5.9.0.1",
+      "type": "application/rdap+json"
+    },
+    {
+      "value": "http://www.ripe.net/data-tools/support/documentation/terms",
+      "rel": "copyright",
+      "href": "http://www.ripe.net/data-tools/support/documentation/terms"
+    }
+  ],
+  "objectClassName": "ip network",
+  "redacted": [
+    {
+      "name": {
+        "description": "Personal e-mail information"
+      },
+      "reason": {
+        "description": "Personal data"
+      },
+      "prePath": "$.entities[?(@.handle=='HOAC1-RIPE')].vcardArray[1][?(@[0]=='e-mail')]",
+      "method": "removal"
+    },
+    {
+      "name": {
+        "description": "Personal e-mail information"
+      },
+      "reason": {
+        "description": "Personal data"
+      },
+      "prePath": "$.entities[?(@.handle=='HOAC1-RIPE')].vcardArray[1][?(@[0]=='e-mail')]",
+      "method": "removal"
+    }
+  ]
+}

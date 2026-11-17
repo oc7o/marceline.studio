@@ -1,0 +1,39 @@
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+backend/staticfiles/
+
+# Node (frontend)
+node_modules/
+dist/
+*.tsbuildinfo
+# Next.js build output (frontend/customer, ADR 0035)
+.next/
+next-env.d.ts
+
+# Local media cache — never commit media
+.cache/
+
+# Docker image build stamps (make up/workers/runtime): local to the checkout, never shared
+.make/
+
+# Agent worktrees and local agent runtime state. `.claude/agents/` is committed on purpose: the
+# two review agents are part of the release process (docs/runbooks/release.md), not local setup.
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+
+# MacOS
+.DS_Store
+
+# Reference fingerprint output from client/fingerprint.py (hashes, never media, but never
+# committed either): the operator's Mac writes these next to the checkout, and an untracked
+# folder in `git status` is noise that hides real changes.
+fingerprints/
+fingerprints-*/

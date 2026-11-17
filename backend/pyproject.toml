@@ -1,0 +1,138 @@
+[project]
+name = "marceline-backend"
+version = "0.1.0"
+description = "Leak detection for creators: crawler, index and fingerprint matching"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "cryptography>=50,<51",
+    "django>=6.1,<6.2",
+    "django-ninja>=1.7,<2",
+    "django-stubs-ext>=6.1,<6.2",
+    "faiss-cpu>=1.15.0",
+    "gunicorn>=26",
+    "httpx>=0.28,<0.29",
+    "numpy>=2.3",
+    "onnxruntime>=1.30,<1.31",
+    "pdqhash>=0.2.8,<0.3",
+    "pillow>=12.3,<13",
+    "psycopg[binary]>=3.3,<4",
+    "segno>=1.6,<2",
+    "selectolax>=0.4,<0.5",
+    "sentry-sdk>=2.69,<3",
+]
+
+[dependency-groups]
+dev = [
+    "django-stubs[compatible-mypy]>=6.1,<6.2",
+    "import-linter>=2.15",
+    "mypy>=2.3,<2.4",
+    "pytest>=8",
+    "pytest-django>=4.14",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.16",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["*/migrations/*"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "DJ", "SIM", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "marceline", "core", "accounts", "billing", "catalog", "index", "crawler", "matching", "delivery"
+]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+plugins = ["mypy_django_plugin.main"]
+exclude = ["/migrations/", "^\\.venv/"]
+
+[[tool.mypy.overrides]]
+# pdqhash is a Cython extension without type information.
+module = ["pdqhash", "pdqhash.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# faiss ships SWIG bindings without type information (ADR 0022).
+module = ["faiss", "faiss.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# onnxruntime ships no py.typed marker (ADR 0037, frame embeddings).
+module = ["onnxruntime", "onnxruntime.*"]
+ignore_missing_imports = true
+
+[tool.django-stubs]
+django_settings_module = "marceline.settings"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "marceline.settings"
+python_files = ["test_*.py"]
+# `-n auto --dist load`: pytest-xdist, one worker per core, dynamic per-test assignment (never
+# `loadfile` — a worker holding a whole file still runs its tests one at a time, so it buys
+# nothing over `load` and only adds a lumpier per-worker runtime). Safe since every test that
+# touches the database restores what a `django_db(transaction=True)` test's teardown truncates
+# (`catalog/safety_term_defaults.py`, `backend/conftest.py::_ensure_safety_terms`) instead of
+# depending on running before it.
+addopts = "--strict-markers -n auto --dist load"
+
+[tool.importlinter]
+root_packages = ["marceline", "core", "accounts", "billing", "catalog", "index", "crawler", "matching", "delivery"]
+
+[[tool.importlinter.contracts]]
+name = "core depends on no project module"
+type = "forbidden"
+source_modules = ["core"]
+forbidden_modules = ["marceline", "accounts", "billing", "catalog", "index", "crawler", "matching", "delivery"]
+
+[[tool.importlinter.contracts]]
+name = "accounts depends only on core"
+type = "forbidden"
+source_modules = ["accounts"]
+forbidden_modules = ["marceline", "billing", "catalog", "index", "crawler", "matching", "delivery"]
+
+[[tool.importlinter.contracts]]
+# Billing needs the organisation it bills and nothing about crawling or matching (ADR 0032).
+name = "billing depends only on accounts and core"
+type = "forbidden"
+source_modules = ["billing"]
+forbidden_modules = ["marceline", "catalog", "index", "crawler", "matching", "delivery"]
+
+[[tool.importlinter.contracts]]
+name = "catalog depends only on core"
+type = "forbidden"
+source_modules = ["catalog"]
+forbidden_modules = ["marceline", "accounts", "billing", "index", "crawler", "matching", "delivery"]
+
+[[tool.importlinter.contracts]]
+name = "index depends only on catalog and core"
+type = "forbidden"
+source_modules = ["index"]
+forbidden_modules = ["marceline", "accounts", "billing", "crawler", "matching", "delivery"]
+
+[[tool.importlinter.contracts]]
+name = "crawler depends only on catalog, index and core"
+type = "forbidden"
+source_modules = ["crawler"]
+forbidden_modules = ["marceline", "accounts", "billing", "matching", "delivery"]
+
+[[tool.importlinter.contracts]]
+name = "matching depends only on index, catalog and core"
+type = "forbidden"
+source_modules = ["matching"]
+forbidden_modules = ["marceline", "accounts", "billing", "crawler", "delivery"]
+
+[[tool.importlinter.contracts]]
+# The production cache (ADR 0028) stores and moves signed bytes; what goes into them is decided by
+# the customer API in the project package, so tenancy and safety stay single-sourced there.
+name = "delivery depends only on core"
+type = "forbidden"
+source_modules = ["delivery"]
+forbidden_modules = ["marceline", "accounts", "billing", "catalog", "index", "crawler", "matching"]

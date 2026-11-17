@@ -1,0 +1,331 @@
+{
+  "arin_originas0_originautnums": [],
+  "cidr0_cidrs": [
+    {
+      "v4prefix": "104.16.0.0",
+      "length": 12
+    }
+  ],
+  "endAddress": "104.31.255.255",
+  "entities": [
+    {
+      "entities": [
+        {
+          "handle": "CLOUD146-ARIN",
+          "links": [
+            {
+              "href": "https://rdap.arin.net/registry/entity/CLOUD146-ARIN",
+              "rel": "self",
+              "type": "application/rdap+json",
+              "value": "https://rdap.arin.net/registry/ip/104.16.0.1"
+            },
+            {
+              "href": "https://whois.arin.net/rest/poc/CLOUD146-ARIN",
+              "rel": "alternate",
+              "type": "application/xml",
+              "value": "https://rdap.arin.net/registry/ip/104.16.0.1"
+            }
+          ],
+          "objectClassName": "entity",
+          "roles": [
+            "routing",
+            "noc"
+          ],
+          "vcardArray": [
+            "vcard",
+            [
+              [
+                "version",
+                {},
+                "text",
+                "4.0"
+              ],
+              [
+                "fn",
+                {},
+                "text",
+                "Cloudflare-NOC"
+              ],
+              [
+                "kind",
+                {},
+                "text",
+                "group"
+              ],
+              [
+                "email",
+                {},
+                "text",
+                "noc@cloudflare.com"
+              ]
+            ]
+          ]
+        },
+        {
+          "handle": "ABUSE2916-ARIN",
+          "links": [
+            {
+              "href": "https://rdap.arin.net/registry/entity/ABUSE2916-ARIN",
+              "rel": "self",
+              "type": "application/rdap+json",
+              "value": "https://rdap.arin.net/registry/ip/104.16.0.1"
+            },
+            {
+              "href": "https://whois.arin.net/rest/poc/ABUSE2916-ARIN",
+              "rel": "alternate",
+              "type": "application/xml",
+              "value": "https://rdap.arin.net/registry/ip/104.16.0.1"
+            }
+          ],
+          "objectClassName": "entity",
+          "roles": [
+            "abuse"
+          ],
+          "vcardArray": [
+            "vcard",
+            [
+              [
+                "version",
+                {},
+                "text",
+                "4.0"
+              ],
+              [
+                "fn",
+                {},
+                "text",
+                "Abuse"
+              ],
+              [
+                "kind",
+                {},
+                "text",
+                "group"
+              ],
+              [
+                "email",
+                {},
+                "text",
+                "abuse@cloudflare.com"
+              ]
+            ]
+          ]
+        },
+        {
+          "handle": "ADMIN2521-ARIN",
+          "links": [
+            {
+              "href": "https://rdap.arin.net/registry/entity/ADMIN2521-ARIN",
+              "rel": "self",
+              "type": "application/rdap+json",
+              "value": "https://rdap.arin.net/registry/ip/104.16.0.1"
+            },
+            {
+              "href": "https://whois.arin.net/rest/poc/ADMIN2521-ARIN",
+              "rel": "alternate",
+              "type": "application/xml",
+              "value": "https://rdap.arin.net/registry/ip/104.16.0.1"
+            }
+          ],
+          "objectClassName": "entity",
+          "roles": [
+            "administrative",
+            "technical"
+          ],
+          "vcardArray": [
+            "vcard",
+            [
+              [
+                "version",
+                {},
+                "text",
+                "4.0"
+              ],
+              [
+                "fn",
+                {},
+                "text",
+                "Admin"
+              ],
+              [
+                "kind",
+                {},
+                "text",
+                "group"
+              ],
+              [
+                "email",
+                {},
+                "text",
+                "rir@cloudflare.com"
+              ]
+            ]
+          ]
+        }
+      ],
+      "handle": "CLOUD14",
+      "links": [
+        {
+          "href": "https://rdap.arin.net/registry/entity/CLOUD14",
+          "rel": "self",
+          "type": "application/rdap+json",
+          "value": "https://rdap.arin.net/registry/ip/104.16.0.1"
+        },
+        {
+          "href": "https://whois.arin.net/rest/org/CLOUD14",
+          "rel": "alternate",
+          "type": "application/xml",
+          "value": "https://rdap.arin.net/registry/ip/104.16.0.1"
+        }
+      ],
+      "objectClassName": "entity",
+      "roles": [
+        "registrant"
+      ],
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            "Cloudflare, Inc."
+          ],
+          [
+            "kind",
+            {},
+            "text",
+            "org"
+          ]
+        ]
+      ]
+    },
+    {
+      "handle": "ADMIN2521-ARIN",
+      "links": [
+        {
+          "href": "https://rdap.arin.net/registry/entity/ADMIN2521-ARIN",
+          "rel": "self",
+          "type": "application/rdap+json",
+          "value": "https://rdap.arin.net/registry/ip/104.16.0.1"
+        },
+        {
+          "href": "https://whois.arin.net/rest/poc/ADMIN2521-ARIN",
+          "rel": "alternate",
+          "type": "application/xml",
+          "value": "https://rdap.arin.net/registry/ip/104.16.0.1"
+        }
+      ],
+      "objectClassName": "entity",
+      "roles": [
+        "technical"
+      ],
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            "Admin"
+          ],
+          [
+            "kind",
+            {},
+            "text",
+            "group"
+          ],
+          [
+            "email",
+            {},
+            "text",
+            "rir@cloudflare.com"
+          ]
+        ]
+      ]
+    },
+    {
+      "handle": "NOC11962-ARIN",
+      "links": [
+        {
+          "href": "https://rdap.arin.net/registry/entity/NOC11962-ARIN",
+          "rel": "self",
+          "type": "application/rdap+json",
+          "value": "https://rdap.arin.net/registry/ip/104.16.0.1"
+        },
+        {
+          "href": "https://whois.arin.net/rest/poc/NOC11962-ARIN",
+          "rel": "alternate",
+          "type": "application/xml",
+          "value": "https://rdap.arin.net/registry/ip/104.16.0.1"
+        }
+      ],
+      "objectClassName": "entity",
+      "roles": [
+        "noc"
+      ],
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            "NOC"
+          ],
+          [
+            "kind",
+            {},
+            "text",
+            "group"
+          ],
+          [
+            "email",
+            {},
+            "text",
+            "noc@cloudflare.com"
+          ]
+        ]
+      ]
+    }
+  ],
+  "handle": "NET-104-16-0-0-1",
+  "ipVersion": "v4",
+  "links": [
+    {
+      "href": "https://rdap.arin.net/registry/ip/104.16.0.0",
+      "rel": "self",
+      "type": "application/rdap+json",
+      "value": "https://rdap.arin.net/registry/ip/104.16.0.1"
+    },
+    {
+      "href": "https://whois.arin.net/rest/net/NET-104-16-0-0-1",
+      "rel": "alternate",
+      "type": "application/xml",
+      "value": "https://rdap.arin.net/registry/ip/104.16.0.1"
+    }
+  ],
+  "name": "CLOUDFLARENET",
+  "objectClassName": "ip network",
+  "parentHandle": "NET-104-0-0-0-0",
+  "startAddress": "104.16.0.0",
+  "type": "DIRECT ALLOCATION"
+}

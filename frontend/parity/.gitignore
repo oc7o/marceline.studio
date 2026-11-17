@@ -1,0 +1,10 @@
+# The harness installs Playwright on demand and generates its own inputs and outputs.
+node_modules/
+package-lock.json
+clips/
+speed-clips/
+out/
+page/dist/
+page/dist-speed/
+# Root-free fallback for the NSS libraries Chromium needs (see README).
+.libs/

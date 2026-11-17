@@ -1,0 +1,90 @@
+{
+  "objectClassName": "domain",
+  "handle": "1542998887_DOMAIN_COM-VRSN",
+  "ldhName": "CLOUDFLARE.COM",
+  "links": [
+    {
+      "value": "https://rdap.verisign.com/com/v1/domain/cloudflare.com",
+      "rel": "self",
+      "href": "https://rdap.verisign.com/com/v1/domain/cloudflare.com",
+      "type": "application/rdap+json"
+    },
+    {
+      "value": "https://rdap.verisign.com/com/v1/domain/cloudflare.com",
+      "rel": "related",
+      "href": "https://rdap.cloudflare.com/rdap/v1/domain/CLOUDFLARE.COM",
+      "type": "application/rdap+json"
+    }
+  ],
+  "entities": [
+    {
+      "objectClassName": "entity",
+      "handle": "1910",
+      "roles": [
+        "registrar"
+      ],
+      "links": [
+        {
+          "href": "http://www.cloudflare.com",
+          "type": "text/html",
+          "value": "https://rdap.cloudflare.com/rdap/v1/",
+          "rel": "about"
+        }
+      ],
+      "publicIds": [
+        {
+          "type": "IANA Registrar ID",
+          "identifier": "1910"
+        }
+      ],
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            "Cloudflare, Inc."
+          ]
+        ]
+      ],
+      "entities": [
+        {
+          "objectClassName": "entity",
+          "roles": [
+            "abuse"
+          ],
+          "vcardArray": [
+            "vcard",
+            [
+              [
+                "version",
+                {},
+                "text",
+                "4.0"
+              ],
+              [
+                "fn",
+                {},
+                "text",
+                ""
+              ],
+              [
+                "email",
+                {},
+                "text",
+                "registrar-abuse@cloudflare.com"
+              ]
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

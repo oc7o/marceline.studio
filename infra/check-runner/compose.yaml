@@ -1,0 +1,29 @@
+# The check runner's shared Postgres (docs/runbooks/check-runner.md). One instance serves every
+# check: each `make remote-check` run gets its own logical database (POSTGRES_DB=marceline_<name>)
+# inside it, so several checks run in parallel without clashing container names or ports. The fixed
+# project `name:` pins this to the same containers regardless of which caller's checkout (under
+# /srv/checks/<name>/) happens to invoke `docker compose up` — there is only ever one of these.
+#
+# No secrets here and nothing but test fixtures ever reaches this database (see the runbook): the
+# same non-secret development default credentials as infra/compose.yaml's `db` service.
+name: marceline-check-runner
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: marceline
+      POSTGRES_USER: marceline
+      POSTGRES_PASSWORD: marceline
+    ports:
+      - "127.0.0.1:${CHECK_RUNNER_PG_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marceline -d marceline"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:

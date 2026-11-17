@@ -1,0 +1,9 @@
+# Paths are relative to the build context (frontend/). Everything the staff SPA needs and this app
+# does not: its build output, its parity harness, and both projects' node_modules and caches.
+node_modules
+dist
+parity
+wasm
+customer/.next
+customer/node_modules
+**/*.tsbuildinfo
