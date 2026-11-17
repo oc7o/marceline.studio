@@ -10,15 +10,19 @@
     "noEmit": true,
     "isolatedModules": true,
     "moduleDetection": "force",
-    "verbatimModuleSyntax": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true,
     "paths": {
+      "@shared/*": ["../frontend/src/*"],
+      "next/link": ["./src/runtime/next-link.tsx"],
+      "next/navigation": ["./src/runtime/next-navigation.ts"],
+      "next/headers": ["./src/runtime/next-headers.ts"],
+      "next": ["./src/runtime/next.d.ts"],
+      "server-only": ["./src/runtime/server-only.ts"],
       "*": ["./node_modules/@types/*", "./node_modules/*"]
     }
   },

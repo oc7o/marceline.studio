@@ -28,7 +28,7 @@ project stopped because it found no customers within its window, so it never lau
 | `client/` | Command-line fingerprinting client |
 | `website/` | The static marketing site that ran at marceline.studio |
 | `infra/` | Compose files, reverse proxy, backup and release scripts |
-| `demo/` | The static demo: the real customer UI on an in-browser mock API |
+| `demo/` | The static demo: the real Next.js customer app on in-browser sample data |
 | `docs/adr/` | 57 architecture decision records |
 | `docs/conventions/`, `CLAUDE.md` | The rules the agents worked under |
 

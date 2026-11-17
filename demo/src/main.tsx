@@ -1,41 +1,37 @@
-import { QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RouterProvider } from "@tanstack/react-router";
+/**
+ * The demo's entry point: the app's route handlers answer `fetch` from memory, every address
+ * outside `/app` leads into it, and the real pages are mounted under the demo banner.
+ */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
-import { ApiError } from "../../frontend/src/api/errors";
-import { queryKeys } from "../../frontend/src/api/queryKeys";
-import { router } from "../../frontend/src/router";
 import { DemoChrome } from "./DemoChrome";
+import { installBff } from "./runtime/bff";
+import { BASE_PATH, withoutBase } from "./runtime/paths";
+import { AppRouter, startRouter } from "./runtime/router";
 import "./demo.css";
 
-// The same client `frontend/src/main.tsx` builds; that file cannot be imported because it mounts
-// the app itself, without the demo banner.
-const queryClient: QueryClient = new QueryClient({
-  queryCache: new QueryCache({
-    onError: (error) => {
-      if (error instanceof ApiError && error.status === 401) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.me });
-      }
-    },
-  }),
-  defaultOptions: {
-    queries: {
-      refetchOnWindowFocus: false,
-      retry: (count, error) => !(error instanceof ApiError && error.status < 500) && count < 2,
-    },
-  },
-});
+function mount(): void {
+  installBff();
+  startRouter();
 
-const root = document.getElementById("root");
-if (!root) throw new Error("#root missing");
+  const root = document.getElementById("root");
+  if (!root) throw new Error("#root missing");
 
-createRoot(root).render(
-  <StrictMode>
-    <DemoChrome>
-      <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>
-    </DemoChrome>
-  </StrictMode>,
-);
+  createRoot(root).render(
+    <StrictMode>
+      <DemoChrome>
+        <AppRouter />
+      </DemoChrome>
+    </StrictMode>,
+  );
+}
+
+if (withoutBase(window.location.pathname) === null) {
+  // A document request, not a history entry: the app's language cookie is scoped to `/app`, and a
+  // document loaded from `/` can neither read nor write it, whatever its address bar says later.
+  // The slash is the form a static host serves a directory under, which saves it a redirect.
+  window.location.replace(`${BASE_PATH}/`);
+} else {
+  mount();
+}

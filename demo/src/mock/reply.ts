@@ -6,9 +6,17 @@ export interface MockRequest {
   body: unknown;
 }
 
+/** A download built in the browser: an invoice PDF, a notice export, the data export. */
+export interface MockFile {
+  name: string;
+  type: string;
+  content: string;
+}
+
 export interface MockReply {
   status: number;
   body: unknown;
+  file?: MockFile;
 }
 
 export function ok(body: unknown): MockReply {
@@ -17,4 +25,8 @@ export function ok(body: unknown): MockReply {
 
 export function refuse(status: number, detail: string): MockReply {
   return { status, body: { detail } };
+}
+
+export function download(file: MockFile): MockReply {
+  return { status: 200, body: null, file };
 }

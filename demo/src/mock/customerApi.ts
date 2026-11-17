@@ -2,21 +2,27 @@
  * The customer API (`/api/v1/app/…`) answered from `state.ts`. Reads are views over the rows;
  * writes change them in memory, so a draft you approve stays approved until the page reloads.
  */
+import { dataExport, invoicePdf, noticeFile } from "./files";
 import { say } from "./notify";
-import { type MockReply, type MockRequest, ok, refuse } from "./reply";
+import { type MockReply, type MockRequest, download, ok, refuse } from "./reply";
 import {
   type ChannelKind,
   type Notice,
   ORGANISATION,
+  addOriginal,
+  rememberAdded,
   type RightsWork,
   type Schemas,
   USERNAME,
   approve,
+  CODE_TTL_HOURS,
+  DATA_REQUEST_DAYS,
   candidatesView,
   caseDetail,
   caseView,
   draftNotice,
   findingView,
+  dataRequests,
   findings,
   findingsOf,
   forwardsNotices,
@@ -31,6 +37,7 @@ import {
   session,
   submissions,
   undeclaredWork,
+  verification,
 } from "./state";
 
 type Params = Record<string, string>;
@@ -48,7 +55,24 @@ function on(method: string, path: string, handler: Handler): void {
   routes.push({ method, pattern: new RegExp(`^/api/v1/app${pattern}/?$`), keys, handler });
 }
 
-export function handleCustomerApi(request: MockRequest): MockReply | null {
+/** Something the demo has no answer for: a read is "not found", a write is declined, both politely. */
+function unknown(request: MockRequest): MockReply {
+  if (request.method === "GET") return refuse(404, "not_found");
+  say("notInDemo");
+  return refuse(503, "demo_unavailable");
+}
+
+/** The answer Django would give, from memory. Never throws: a failing handler is "not available". */
+export function answerCustomerApi(request: MockRequest): MockReply {
+  try {
+    return handleCustomerApi(request) ?? unknown(request);
+  } catch (error) {
+    console.warn("[demo] mock API failed for", request.method, request.path, error);
+    return unknown(request);
+  }
+}
+
+function handleCustomerApi(request: MockRequest): MockReply | null {
   if (!request.path.startsWith("/api/v1/app/")) return null;
   for (const route of routes) {
     if (route.method !== request.method) continue;
@@ -83,12 +107,14 @@ function account(): Schemas["AccountOut"] {
     organisation: ORGANISATION,
     monitored_sources: "50_plus",
     can_add_originals: true,
+    // Sending the file itself stays off, as on the public host: an original is fingerprinted in the
+    // visitor's own browser, which is also what keeps the banner's promise true.
     can_upload_media: false,
     can_export_data: true,
-    can_verify_account: false,
-    can_request_data: false,
-    email_verified: true,
-    can_verify_email: false,
+    can_verify_account: true,
+    can_request_data: true,
+    email_verified: session.emailVerified,
+    can_verify_email: true,
   };
 }
 
@@ -108,6 +134,101 @@ on("POST", "/auth/logout", () => {
   say("signedOut");
   return ok(sessionView());
 });
+
+
+// --- The mailed account actions: no mail exists here, so every link "works" --------------------
+on("POST", "/auth/password-reset", () => {
+  say("noMail");
+  return ok({});
+});
+on("GET", "/auth/password-reset/{token}", () => ok({ email: USERNAME, password_min_length: 12 }));
+on("POST", "/auth/password-reset/{token}", () => {
+  say("passwordKept");
+  return ok({ pending: false });
+});
+on("POST", "/auth/verify-email", () => {
+  say("noMail");
+  return ok({});
+});
+on("GET", "/auth/verify-email/{token}", () => ok({ email: USERNAME }));
+on("POST", "/auth/verify-email/{token}", () => {
+  session.emailVerified = true;
+  return saved(ok({}));
+});
+
+// --- Downloads -----------------------------------------------------------------
+function file(found: ReturnType<typeof invoicePdf>): MockReply {
+  if (!found) return refuse(404, "not_found");
+  say("download");
+  return download(found);
+}
+on("GET", "/export", () => file(dataExport()));
+on("GET", "/invoices/{id}/pdf", (_request, { id }) => file(invoicePdf(id)));
+on("GET", "/notices/{id}/export/{format}", (_request, { id, format }) => file(noticeFile(id, format)));
+
+// --- Showing the account is yours -------------------------------------------------
+on("GET", "/verification", () => ok(verification));
+on("POST", "/verification/accounts", (request) => {
+  const body = record(request.body);
+  const platform = verification.platforms.find((entry) => entry.code === body.platform);
+  if (!platform) return refuse(400, "unknown_platform");
+  const handle = text(body.handle).trim();
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(handle)) return refuse(400, "invalid_handle");
+  const letters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const block = () => Array.from({ length: 4 }, () => letters[Math.floor(Math.random() * letters.length)]).join("");
+  verification.accounts.unshift({
+    id: nextId("chal"),
+    platform: platform.code,
+    handle,
+    profile_url: text(body.profile_url).trim() || null,
+    state: "pending",
+    code: `MRC-${block()}-${block()}`,
+    code_expires_at: new Date(Date.now() + CODE_TTL_HOURS * 3_600_000).toISOString(),
+    method: null,
+    decided_at: null,
+    placed_at: null,
+  });
+  return saved(ok(verification));
+});
+on("POST", "/verification/accounts/{id}/placed", (_request, { id }) => {
+  const claim = verification.accounts.find((account) => account.id === id);
+  if (!claim) return refuse(404, "not_found");
+  if (claim.state !== "pending") return refuse(409, "not_open");
+  claim.state = "placed";
+  claim.placed_at = nowIso();
+  return saved(ok(verification));
+});
+
+// --- The creator's own data requests ---------------------------------------------
+function askFor(kind: "export" | "deletion"): MockReply {
+  if (dataRequests.requests.some((item) => item.kind === kind && item.open)) return refuse(409, "already_open");
+  dataRequests.requests.unshift({
+    kind,
+    status: "requested",
+    requested_at: nowIso(),
+    due_at: new Date(Date.now() + DATA_REQUEST_DAYS * 86_400_000).toISOString(),
+    settled_at: null,
+    open: true,
+  });
+  return saved(ok(dataRequests));
+}
+function takeBack(kind: "export" | "deletion"): MockReply {
+  const open = dataRequests.requests.find((item) => item.kind === kind && item.open);
+  if (!open) return refuse(409, "not_open");
+  open.status = "withdrawn";
+  open.open = false;
+  open.settled_at = nowIso();
+  return saved(ok(dataRequests));
+}
+on("GET", "/data-requests", () => ok(dataRequests));
+on("POST", "/data-requests/export", () => askFor("export"));
+on("POST", "/data-requests/export/withdraw", () => takeBack("export"));
+on("POST", "/data-requests/deletion", (request) =>
+  text(record(request.body).confirm).trim() === dataRequests.deletion_phrase
+    ? askFor("deletion")
+    : refuse(400, "confirmation_mismatch"),
+);
+on("POST", "/data-requests/deletion/withdraw", () => takeBack("deletion"));
 
 // --- Originals, findings, records -------------------------------------------
 on("GET", "/originals", () => ok(originals.map(originalView)));
@@ -151,8 +272,8 @@ on("POST", "/fingerprints", (request) => {
     duration_s: fingerprint.kind === "photos" ? null : duration,
     created_at: nowIso(),
   };
-  originals.unshift(row);
-  rights.works.push(undeclaredWork(row.id, title));
+  addOriginal(row);
+  rememberAdded(row);
   say("added");
   const added: Schemas["AddOriginalOut"] = { original: originalView(row), created: true };
   return { status: 201, body: added };
@@ -210,14 +331,35 @@ on("POST", "/rights/works/{id}/authority/withdrawal", (_request, { id }) =>
     work.notice_blockers = ["authority_not_declared"];
   }),
 );
+/** A bare lowercase host from a host or URL, or null: the rule the real API stores partners by. */
+function partnerDomain(value: string): string | null {
+  let host: string;
+  try {
+    host = new URL(value.includes("//") ? value : `https://${value}`).hostname;
+  } catch {
+    return null;
+  }
+  host = host.replace(/\.$/, "").replace(/^www\./, "").toLowerCase();
+  const labels = host.split(".");
+  return labels.length >= 2 && labels.every((label) => /^[a-z0-9-]{1,63}$/.test(label)) ? host : null;
+}
+
 on("POST", "/rights/partners", (request) => {
   const body = record(request.body) as Partial<Schemas["PartnerIn"]>;
+  const kind = body.kind ?? "domain";
+  const name = text(body.name).trim();
+  if (!name) return refuse(409, "partner_name_required");
+  const given = text(body.domain).trim();
+  const domain = given ? partnerDomain(given) : "";
+  if (domain === null) return refuse(409, "invalid_domain");
+  const prefix = text(body.path_prefix).trim().replace(/^\/+|\/+$/g, "");
+  if (!domain && (kind === "domain" || kind === "platform" || prefix)) return refuse(409, "partner_domain_required");
   rights.partners.push({
     id: nextId("partner"),
-    kind: body.kind ?? "domain",
-    name: text(body.name) || "—",
-    domain: body.domain || null,
-    path_prefix: body.path_prefix || null,
+    kind,
+    name,
+    domain: domain || null,
+    path_prefix: prefix ? `/${prefix}` : null,
     note: body.note ?? "",
     created_at: nowIso(),
   });

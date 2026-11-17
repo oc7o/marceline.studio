@@ -1,10 +1,8 @@
 /**
- * The few things the app does with a plain link instead of `fetch`: file downloads from
- * `/api/…` (invoice PDF, notice exports, "download my data") and matched page addresses that
- * open in a new tab. A static host has no such files and the sample sites do not exist, so one
- * click listener answers both — a file built in the browser, or a line saying it is a sample.
+ * The three files the app lets a customer download — an invoice PDF, a notice in one of its export
+ * formats, and "download my data" — built in the browser from the sample rows.
  */
-import { say } from "./notify";
+import type { MockFile } from "./reply";
 import {
   type Notice,
   ORGANISATION,
@@ -20,12 +18,6 @@ import {
   removalsView,
   rights,
 } from "./state";
-
-interface SampleFile {
-  name: string;
-  type: string;
-  content: string;
-}
 
 /** A one-page PDF with the standard Helvetica face: ASCII only, so string offsets are byte offsets. */
 function pdf(lines: readonly string[]): string {
@@ -59,7 +51,9 @@ function euros(cents: number): string {
   return `${(cents / 100).toFixed(2)} EUR`;
 }
 
-function invoicePdf(invoice: Schemas["CustomerInvoiceOut"]): SampleFile {
+export function invoicePdf(id: string | undefined): MockFile | null {
+  const invoice: Schemas["CustomerInvoiceOut"] | undefined = invoices.find((item) => item.id === id);
+  if (!invoice) return null;
   const cancellation = invoice.kind === "cancellation";
   return {
     name: `${invoice.number}.pdf`,
@@ -85,7 +79,9 @@ function invoicePdf(invoice: Schemas["CustomerInvoiceOut"]): SampleFile {
   };
 }
 
-function noticeFile(notice: Notice, format: string): SampleFile {
+export function noticeFile(id: string | undefined, format: string | undefined): MockFile | null {
+  const notice: Notice | undefined = notices.find((item) => item.id === id);
+  if (!notice) return null;
   const body = notice.approved_text ?? notice.preview_text ?? "";
   const stem = `notice-${notice.id.slice(-8)}`;
   if (format === "eml") {
@@ -119,13 +115,18 @@ function noticeFile(notice: Notice, format: string): SampleFile {
     return {
       name: `${stem}-annex.txt`,
       type: "text/plain",
-      content: [`Evidence annex — "${notice.work_title}" (${notice.original_id})`, "No image, thumbnail or copy of the reported material is attached.", "", ...rows].join("\n\n"),
+      content: [
+        `Evidence annex — "${notice.work_title}" (${notice.original_id})`,
+        "No image, thumbnail or copy of the reported material is attached.",
+        "",
+        ...rows,
+      ].join("\n\n"),
     };
   }
   return { name: `${stem}.txt`, type: "text/plain", content: body };
 }
 
-function dataExport(): SampleFile {
+export function dataExport(): MockFile {
   return {
     name: "marceline-demo-export.json",
     type: "application/json",
@@ -144,60 +145,4 @@ function dataExport(): SampleFile {
       2,
     ),
   };
-}
-
-function fileFor(path: string): SampleFile | null {
-  const invoice = /^\/api\/v1\/app\/invoices\/([^/]+)\/pdf$/.exec(path);
-  if (invoice) {
-    const found = invoices.find((item) => item.id === invoice[1]);
-    return found ? invoicePdf(found) : null;
-  }
-  const exported = /^\/api\/v1\/app\/notices\/([^/]+)\/export\/(\w+)$/.exec(path);
-  if (exported) {
-    const found = notices.find((item) => item.id === decodeURIComponent(exported[1] ?? ""));
-    return found ? noticeFile(found, exported[2] ?? "txt") : null;
-  }
-  if (path === "/api/v1/app/export") return dataExport();
-  return null;
-}
-
-function save(file: SampleFile): void {
-  const url = URL.createObjectURL(new Blob([file.content], { type: file.type }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = file.name;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
-}
-
-export function installLinkHandling(): void {
-  document.addEventListener(
-    "click",
-    (event) => {
-      const link = event.target instanceof Element ? event.target.closest("a[href]") : null;
-      if (!(link instanceof HTMLAnchorElement)) return;
-      let url: URL;
-      try {
-        url = new URL(link.href);
-      } catch {
-        return;
-      }
-      if (url.origin === window.location.origin && url.pathname.startsWith("/api/")) {
-        event.preventDefault();
-        const file = fileFor(url.pathname);
-        if (file) {
-          save(file);
-          say("download");
-        } else {
-          say("notInDemo");
-        }
-      } else if ((url.protocol === "http:" || url.protocol === "https:") && url.hostname.endsWith(".example")) {
-        event.preventDefault();
-        say("sampleLink");
-      }
-    },
-    true,
-  );
 }

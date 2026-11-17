@@ -1,5 +1,6 @@
-// A static server that behaves like GitHub Pages: files as they are, a directory's index.html,
-// and dist/404.html (with status 404) for everything else. `npm run preview [port]`.
+// A static server that behaves like GitHub Pages: files as they are, a directory's index.html
+// (after a 301 to the address with a slash), and dist/404.html (with status 404) for everything
+// else. `npm run preview [port]`.
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
@@ -25,8 +26,17 @@ function fileFor(pathname) {
   return existsSync(index) ? index : null;
 }
 
+function isDirectory(pathname) {
+  const path = join(dist, normalize(decodeURIComponent(pathname)));
+  return path.startsWith(dist) && existsSync(join(path, "index.html")) && statSync(path).isDirectory();
+}
+
 createServer((request, response) => {
   const { pathname } = new URL(request.url ?? "/", "http://localhost");
+  if (!pathname.endsWith("/") && isDirectory(pathname)) {
+    response.writeHead(301, { location: `${pathname}/` }).end();
+    return;
+  }
   const file = fileFor(pathname);
   const served = file ?? join(dist, "404.html");
   response.writeHead(file ? 200 : 404, { "content-type": TYPES[extname(served)] ?? "application/octet-stream" });

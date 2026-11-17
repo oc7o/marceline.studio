@@ -27,9 +27,15 @@ export function publicId(prefix: string, seed: number): string {
 }
 
 let serial = 1000;
+/** Ids that outlived a reload (see `rememberAdded`): the counter starts over, they must not be issued twice. */
+const taken = new Set<string>();
 export function nextId(prefix: string): string {
-  serial += 1;
-  return publicId(prefix, serial);
+  let id: string;
+  do {
+    serial += 1;
+    id = publicId(prefix, serial);
+  } while (taken.has(id));
+  return id;
 }
 
 export function nowIso(): string {
@@ -351,6 +357,46 @@ const UNDECLARED: Partial<RightsWork> = {
 
 export function undeclaredWork(originalId: string, title: string): RightsWork {
   return { ...work(originalId, UNDECLARED), title };
+}
+
+export function addOriginal(row: OriginalRow): void {
+  originals.unshift(row);
+  rights.works.push(undeclaredWork(row.id, row.title));
+}
+
+/*
+  An original added in the tab has an address of its own (`/app/originals/{id}`), and the screen
+  that follows "Add an original" links straight to it. Everything else a reload resets is still
+  on a page the visitor can reach; this one would be "not found". So the row — a title, a kind and
+  a length, never the file — stays in the tab's session storage until the tab closes.
+*/
+const ADDED_KEY = "marceline.demo.added";
+
+function addedRows(): OriginalRow[] {
+  try {
+    const stored: unknown = JSON.parse(globalThis.sessionStorage?.getItem(ADDED_KEY) ?? "[]");
+    if (!Array.isArray(stored)) return [];
+    return stored.filter(
+      (row): row is OriginalRow =>
+        typeof row === "object" &&
+        row !== null &&
+        /^orig_[0-9a-f]{32}$/.test(String((row as OriginalRow).id)) &&
+        typeof (row as OriginalRow).title === "string" &&
+        typeof (row as OriginalRow).created_at === "string" &&
+        ((row as OriginalRow).kind === "video" || (row as OriginalRow).kind === "photos") &&
+        ((row as OriginalRow).duration_s === null || typeof (row as OriginalRow).duration_s === "number"),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function rememberAdded(row: OriginalRow): void {
+  try {
+    globalThis.sessionStorage?.setItem(ADDED_KEY, JSON.stringify([...addedRows(), row]));
+  } catch {
+    // Storage is blocked or full: the original still exists until the page reloads.
+  }
 }
 
 export const rights: Schemas["RightsOverviewOut"] = {
@@ -786,7 +832,69 @@ export const invoices: Schemas["CustomerInvoiceOut"][] = [
 
 export const submissions: Schemas["SubmissionOut"][] = [];
 
-export const session = { authenticated: true };
+export const session = { authenticated: true, emailVerified: true };
+
+// ---------------------------------------------------------------------------
+// Showing the account is yours, and the creator's own data requests
+// ---------------------------------------------------------------------------
+function hoursFromNow(hours: number): string {
+  return new Date(Date.now() + hours * 3_600_000).toISOString();
+}
+
+export const CODE_TTL_HOURS = 72;
+
+export const verification: Schemas["VerificationStatusOut"] = {
+  identity_status: "verified",
+  method: "video_call",
+  code_ttl_hours: CODE_TTL_HOURS,
+  platforms: [
+    { code: "own_website", label: "Own website", hosts: [], code_accepted: true },
+    { code: "other_platform", label: "Another platform", hosts: [], code_accepted: true },
+  ],
+  accounts: [
+    {
+      id: publicId("chal", 2),
+      platform: "other_platform",
+      handle: "novakstudio.clips",
+      profile_url: null,
+      state: "pending",
+      code: "MRC-7K2Q-9D4X",
+      code_expires_at: hoursFromNow(41),
+      method: null,
+      decided_at: null,
+      placed_at: null,
+    },
+    {
+      id: publicId("chal", 1),
+      platform: "own_website",
+      handle: "novak-studio",
+      profile_url: "https://novak-studio.example/about",
+      state: "verified",
+      code: null,
+      code_expires_at: null,
+      method: "video_call",
+      decided_at: "2026-08-02T10:15:00Z",
+      placed_at: "2026-08-01T16:40:00Z",
+    },
+  ],
+};
+
+export const DATA_REQUEST_DAYS = 30;
+
+export const dataRequests: Schemas["DataRequestsOut"] = {
+  contact_email: "privacy@marceline.example",
+  deletion_phrase: "DELETE",
+  requests: [
+    {
+      kind: "export",
+      status: "done",
+      requested_at: "2026-09-03T08:12:00Z",
+      due_at: "2026-10-03T08:12:00Z",
+      settled_at: "2026-09-10T14:30:00Z",
+      open: false,
+    },
+  ],
+};
 
 // ---------------------------------------------------------------------------
 // Views: what the API derives from the rows above
@@ -995,4 +1103,9 @@ export function forwardsNotices(hostname: string, kind: ChannelKind): boolean {
   return providersFor(host).some((provider) =>
     provider.channels.some((item) => item.kind === kind && item.forwards_to_site_operator === true),
   );
+}
+
+for (const row of addedRows()) {
+  taken.add(row.id);
+  addOriginal(row);
 }
