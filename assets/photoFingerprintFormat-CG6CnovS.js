@@ -1,0 +1,2 @@
+var e=`browser-rgb-pdq-v0`,t=`photos`,n=5e3,r=`marceline-photo-collection-v1
+`,i=`image/jpeg,image/png,image/webp,image/avif`,a=89478485;function o(e){let t=e.map(e=>{let t=e.replace(/^.*[\\/]/,``),n=t.lastIndexOf(`.`);return n>0?t.slice(0,n):t}),n=t[0];if(n===void 0)return`photos`;let r=n.length;for(let e of t.slice(1)){let t=0;for(;t<r&&t<e.length&&e[t]===n[t];)t++;r=t}return n.slice(0,r).replace(/[\s._-]*\d*$/,``)||n||`photos`}export{a,i,r as n,n as o,t as r,o as s,e as t};
