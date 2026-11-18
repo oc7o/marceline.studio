@@ -159,7 +159,7 @@ function sampleRoutes(): string[] {
 
 /*
   GitHub Pages has no rewrite rules. Every address is the same document, and the router reads the
-  address it was asked for: `/` (which leads into the app), `/app`, each fixed route of the app and
+  address it was asked for: `/` (the front page), `/app`, each fixed route of the app and
   each sample row's own address answer 200 from a copy of it. Anything else — an original added in
   the tab, a mailed link, a typo — is answered with /404.html, the same document again, so the app
   still opens and says what it would say.

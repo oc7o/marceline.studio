@@ -34,9 +34,10 @@ The customer app renders on a server and reads Django. A static host has neither
 - **The route handlers are the real ones.** An island posts to `/app/api/…` as in production;
   `src/runtime/bff.ts` hands the request to the handler in `frontend/customer/app/api`.
 - **Every address is the same document.** `/app`, each fixed route and each sample row's address
-  get a copy of it, and `404.html` is one more, so a deep link survives a reload. An address
-  outside `/app` (`/` included) is a real redirect to `/app/`: the app's language cookie is scoped
-  to `/app`, and only a document loaded from there can read it.
+  get a copy of it, and `404.html` is one more, so a deep link survives a reload. `/` is the
+  demo's own front page (`src/Home.tsx`, with the design system's tier icons); any other address
+  outside `/app` is a real redirect to `/app/`: the app's language cookie is scoped to `/app`, and
+  only a document loaded from there can read it.
 
 Nothing in `frontend/` is changed for the demo. The sentences of two flows the demo does not have
 (the invite's declaration and the one for sending a file to a server) are left out of the built
