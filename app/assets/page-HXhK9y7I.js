@@ -1,0 +1,1 @@
+import{n as e}from"./AccountEmailScreen-E1WUVfYw.js";import{B as t,C as n,K as r,V as i}from"./index-DGzCB1mc.js";var a=r(),o=`force-dynamic`;async function s(){let{t:r,language:o,resource:s}=await t(),c=await n();return(0,a.jsx)(e,{i18n:{t:r,language:o},username:c.username,canVerify:c.can_verify_email,words:i(s,`accountEmail`,`common`)})}export{s as default,o as dynamic};
