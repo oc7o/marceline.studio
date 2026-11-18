@@ -5,3 +5,11 @@
 */
 @import "../../frontend/customer/app/globals.css";
 @source "../../frontend/customer";
+
+/*
+  The app's contact address is out of service. The footer and the error page are the app's own
+  components, used unchanged, so the sentence that offers the address is hidden here instead.
+*/
+:is(span, p):has(> a[href="mailto:contact@marceline.studio"]) {
+  display: none;
+}

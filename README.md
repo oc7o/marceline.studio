@@ -36,7 +36,9 @@ project stopped because it found no customers within its window, so it never lau
 
 This is an edited export, not the working repository.
 
-- The git history, issues and pull requests are not included; the snapshot is a single commit.
+- The git history, issues and pull requests are not included; the snapshot starts from a single
+  commit.
+- The `@marceline.studio` mail addresses that appear in code and documents are out of service.
 - The crawled sites are anonymised as `site01` … `site25`, and example names, hosts and addresses
   are placeholders. The site adapters therefore document an approach; they do not run against
   anything.
