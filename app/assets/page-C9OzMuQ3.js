@@ -1,0 +1,1 @@
+import{t as e}from"./AccountEmailScreen-BWuH7WoX.js";import{N as t,P as n,z as r}from"./index-CvfWKREX.js";var i=r(),a=`force-dynamic`,o={robots:{index:!1,follow:!1}};async function s(){let{t:r,language:a,resource:o}=await t();return(0,i.jsx)(e,{i18n:{t:r,language:a},words:n(o,`accountEmail`,`common`,`signIn`)})}export{s as default,a as dynamic,o as metadata};
